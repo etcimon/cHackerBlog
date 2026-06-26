@@ -1,0 +1,17 @@
+// Token contract shared by every theme. A theme is a Sass map of logical
+// tokens; `emit()` writes them as the --cb-* custom properties that Tailwind
+// consumes (see tailwind.config.ts). Colors are space-separated "r g b"
+// triplets so Tailwind's `rgb(var(--cb-x) / <alpha-value>)` works.
+@use "sass:map";
+
+@mixin emit($t) {
+  --cb-bg: #{map.get($t, bg)};
+  --cb-fg: #{map.get($t, fg)};
+  --cb-accent: #{map.get($t, accent)};
+  --cb-muted: #{map.get($t, muted)};
+  --cb-card: #{map.get($t, card)};
+  --cb-border: #{map.get($t, border)};
+  --cb-font-body: #{map.get($t, font-body)};
+  --cb-font-heading: #{map.get($t, font-heading)};
+  --cb-font-mono: #{map.get($t, font-mono)};
+}

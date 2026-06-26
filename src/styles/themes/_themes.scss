@@ -1,0 +1,21 @@
+// Emits each palette as a [data-theme="…"] block of --cb-* custom properties.
+// The layout sets <html data-theme> from the THEME env var; :root defaults to
+// the hacker terminal so the page is styled even before hydration.
+@use "tokens";
+@use "palettes";
+
+:root {
+  @include tokens.emit(palettes.$hacker);
+}
+
+[data-theme="hacker"] {
+  @include tokens.emit(palettes.$hacker);
+}
+
+[data-theme="medium"] {
+  @include tokens.emit(palettes.$medium);
+}
+
+[data-theme="substack"] {
+  @include tokens.emit(palettes.$substack);
+}

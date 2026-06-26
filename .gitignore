@@ -1,0 +1,82 @@
+# Dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# Bun
+bun.lockb
+
+# Next.js
+/.next/
+/out/
+next-env.d.ts
+
+# Production
+/build
+
+# Environment
+.env
+.env*.local
+.env.production
+
+# Database
+prisma/dev.db
+prisma/dev.db-journal
+prisma/*.db
+prisma/*.db-journal
+*.sqlite
+*.sqlite-journal
+
+# Prisma
+# Keep migrations but ignore lock file
+prisma/migration_lock.toml
+
+# Uploads (self-hosted media)
+/public/uploads/*
+!/public/uploads/.gitkeep
+
+# PM2
+logs/
+*.log
+pm2-*.log
+
+# Testing
+/coverage
+.nyc_output
+*.lcov
+
+# TypeScript
+*.tsbuildinfo
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Misc
+*.pem
+*.key
+*.crt
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+lerna-debug.log*
+.cache
+.parcel-cache
+.temp
+.tmp

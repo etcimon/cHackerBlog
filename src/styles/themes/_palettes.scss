@@ -1,0 +1,45 @@
+// Theme palettes (the "subsets"). `$substack` is intentionally derived from
+// `$medium` via map.merge — Substack is a Medium-style theme with a different
+// accent, warmer paper background, and a serif display face. This is the
+// "extending medium-style to substack style" relationship in one place.
+@use "sass:map";
+
+// --- Hacker terminal: green-on-black monospace ------------------------------
+$hacker: (
+  bg: "0 0 0",
+  fg: "51 255 102",
+  accent: "0 255 153",
+  muted: "20 80 40",
+  card: "8 12 8",
+  border: "20 60 30",
+  font-body: "'JetBrains Mono', ui-monospace, SFMono-Regular, monospace",
+  font-heading: "'JetBrains Mono', ui-monospace, SFMono-Regular, monospace",
+  font-mono: "'JetBrains Mono', ui-monospace, SFMono-Regular, monospace",
+);
+
+// --- Medium: clean white, serif body, green accent --------------------------
+$medium: (
+  bg: "255 255 255",
+  fg: "41 41 41",
+  accent: "26 137 23",
+  muted: "117 117 117",
+  card: "255 255 255",
+  border: "230 230 230",
+  font-body: "Georgia, 'Times New Roman', Times, serif",
+  font-heading: "'Helvetica Neue', Helvetica, Arial, sans-serif",
+  font-mono: "'SFMono-Regular', Menlo, Consolas, monospace",
+);
+
+// --- Substack: extends Medium (warm paper, orange accent, serif display) ----
+$substack: map.merge(
+  $medium,
+  (
+    bg: "255 255 255",
+    fg: "30 30 28",
+    accent: "255 102 0",
+    muted: "107 107 107",
+    card: "253 251 247",
+    border: "234 230 222",
+    font-heading: "'Spectral', Georgia, 'Times New Roman', serif",
+  )
+);

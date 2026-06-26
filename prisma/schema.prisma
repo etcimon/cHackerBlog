@@ -1,0 +1,117 @@
+// cHackerBlog data layer.
+//
+// NOTE on multi-provider: Prisma's `datasource.provider` must be a string
+// literal (it cannot read env()). For local development it is "sqlite"; for
+// production deploys swap it to "postgresql" (the models below are written to
+// be compatible with both — no enums, no native arrays, JSON stored as String).
+// The `url` is env-driven via DATABASE_URL.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite" // production: change to "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Singleton (id = 1) holding all global blog configuration captured on the
+/// first-run setup screen and editable later by the admin.
+model SiteSettings {
+  id              Int      @id @default(1) @map("id")
+  setupComplete   Boolean  @default(false) @map("setup_complete")
+
+  // Branding
+  title           String   @default("cHackerBlog") @map("title")
+  description     String   @default("") @map("description")
+  faviconUrl      String?  @map("favicon_url")
+  coverUrl        String?  @map("cover_url")
+  authorName      String   @default("") @map("author_name")
+  authorThumbUrl  String?  @map("author_thumb_url")
+  // Raw HTML injected into <head> (analytics, meta, fonts, etc.)
+  headHtml        String   @default("") @map("head_html")
+
+  // Social accounts + auto-posting
+  xHandle             String? @map("x_handle")
+  linkedinUrl         String? @map("linkedin_url")
+  socialAutopost      Boolean @default(false) @map("social_autopost")
+
+  // NOTE: theme/styling is intentionally NOT stored here. The active theme is
+  // chosen by the THEME env var and defined in SCSS (src/styles/themes).
+
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("site_settings")
+  @@index([id])
+}
+
+/// A blog article. Feed is ordered by `publishedAt` desc and filtered by tag.
+/// `locale` allows multilingual entries (one row per language variant).
+model Article {
+  id          String    @id @default(cuid()) @map("id")
+  slug        String    @unique @map("slug")
+  locale      String    @default("en") @map("locale")
+
+  title       String    @map("title")
+  // Full rich HTML body produced by the WYSIWYG editor.
+  content     String    @default("") @map("content")
+  coverUrl    String?   @map("cover_url")
+
+  published   Boolean   @default(true) @map("published")
+  publishedAt DateTime  @default(now()) @map("published_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  // Pinning: pinned articles appear first in the feed, ordered by pinnedAt desc
+  pinned      Boolean   @default(false) @map("pinned")
+  pinnedAt    DateTime? @map("pinned_at")
+
+  tags        Tag[]     @relation("ArticleTags")
+  comments    Comment[]
+
+  @@map("articles")
+  @@index([published, publishedAt, pinned, pinnedAt])
+  @@index([locale])
+  @@index([slug])
+  @@index([pinned, pinnedAt, publishedAt])
+}
+
+/// Tags listed at the top of the feed and on each article header.
+model Tag {
+  id        String    @id @default(cuid()) @map("id")
+  name      String    @unique @map("name")
+  slug      String    @unique @map("slug")
+  articles  Article[] @relation("ArticleTags")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@map("tags")
+  @@index([name])
+  @@index([slug])
+}
+
+/// Reader comment attached to an article. `ip` retained for rate-limit/abuse.
+model Comment {
+  id         String   @id @default(cuid()) @map("id")
+  articleId  String   @map("article_id")
+  article    Article  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  authorName String   @default("anonymous") @map("author_name")
+  email      String?  @map("email")
+  body       String   @map("body")
+  approved   Boolean  @default(false) @map("approved")
+  ip         String?  @map("ip")
+  
+  // Age verification and spam detection
+  ageConfirmed Boolean @default(false) @map("age_confirmed")
+  acceptabilityScore Int @default(0) @map("acceptability_score") // 0-100, higher is better
+  validationReasons String? @map("validation_reasons") // JSON string of validation reasons
+
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("comments")
+  @@index([articleId, approved, createdAt])
+  @@index([articleId, ip])
+  @@index([approved])
+  @@index([articleId])
+}
