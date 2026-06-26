@@ -9,6 +9,7 @@ import { createArticle } from "@/lib/articles";
 import { requireAdmin } from "@/lib/auth";
 import { getSettings } from "@/lib/settings";
 import { autopostArticle } from "@/lib/social";
+import { truncateContent } from "@/lib/types";
 
 export const runtime = "nodejs";
 
@@ -22,8 +23,9 @@ export const POST = handler(async (req: Request) => {
   let social = { x: null as string | null, linkedin: null as string | null };
   if (article.published) {
     const settings = await getSettings();
+    const preview = truncateContent(article.content, 200);
     social = await autopostArticle(
-      { title: article.title, preview: article.preview, slug: article.slug },
+      { title: article.title, preview, slug: article.slug },
       settings.socialAutopost,
     );
   }

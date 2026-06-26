@@ -2,7 +2,9 @@ import { setup, teardown, seedTestData } from "./setup";
 
 describe("Theme Switching", () => {
   beforeAll(async () => {
-    await seedTestData();
+    // Setup database for tests that need it
+    const { setup } = await import("./setup");
+    await setup();
   }, 30000);
 
   it("should verify theme environment variable is set", () => {

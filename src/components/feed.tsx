@@ -14,6 +14,7 @@ import { ArticleCard } from "@/components/article-card";
 import { TagBar } from "@/components/tag-bar";
 import { AdminBar } from "@/components/admin-bar";
 import { ArticleEditor } from "@/components/article-editor";
+import { useAdmin } from "@/components/admin-context";
 
 interface Props {
   initialPage: FeedPage;
@@ -26,12 +27,14 @@ interface Props {
 }
 
 export function Feed({ initialPage, tags, prefetchPages, expandedCount, expandAll }: Props) {
+  const { isAdmin } = useAdmin();
   const [items, setItems] = useState<FeedItem[]>(initialPage.items);
   const [cursor, setCursor] = useState<string | null>(initialPage.nextCursor);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<FeedItem | null>(null);
   const [creating, setCreating] = useState(false);
+  const [allTags, setAllTags] = useState<TagItem[]>(tags);
 
   const sentinelRef = useRef<HTMLDivElement>(null);
   const loadingRef = useRef(false);
@@ -87,15 +90,18 @@ export function Feed({ initialPage, tags, prefetchPages, expandedCount, expandAl
     return () => observer.disconnect();
   }, [cursor, activeTag, prefetchPages, fetchPage]);
 
-  const handleSaved = useCallback(() => {
+  const handleSaved = useCallback(async () => {
     setEditing(null);
     setCreating(false);
+    // Refresh tags after article save
+    const updatedTags = await api.get<TagItem[]>("/api/tags");
+    setAllTags(updatedTags);
     selectTag(activeTag); // refresh feed in place
   }, [activeTag, selectTag]);
 
   return (
     <>
-      <TagBar tags={tags} active={activeTag} onSelect={selectTag} />
+      <TagBar tags={allTags} active={activeTag} onSelect={selectTag} isAdmin={isAdmin} />
 
       <div>
         {items.map((item, idx) => (
@@ -123,7 +129,7 @@ export function Feed({ initialPage, tags, prefetchPages, expandedCount, expandAl
       {(creating || editing) && (
         <ArticleEditor
           article={editing}
-          allTags={tags}
+          allTags={allTags}
           onClose={() => {
             setCreating(false);
             setEditing(null);

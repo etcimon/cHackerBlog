@@ -1,5 +1,5 @@
 // Set up environment before importing kv
-process.env.DATABASE_URL = "file:./test.db";
+process.env.DATABASE_URL = "file:./test.sqlite";
 process.env.CACHE_DRIVER = "memory";
 
 import { kvGet, kvSet, kvDel, kvDelByPrefix } from "@/lib/kv";

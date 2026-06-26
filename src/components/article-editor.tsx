@@ -8,7 +8,7 @@
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { X } from "lucide-react";
+import { X, Plus } from "lucide-react";
 import { articleInputSchema, type ArticleInput } from "@/lib/schemas";
 import type { FeedItem, TagItem } from "@/lib/types";
 import { api, ApiClientError } from "@/lib/api-client";
@@ -27,6 +27,9 @@ export function ArticleEditor({ article, allTags, onClose, onSaved }: Props) {
   const isEdit = Boolean(article);
   const [content, setContent] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [showAddTagModal, setShowAddTagModal] = useState(false);
+  const [newTagName, setNewTagName] = useState("");
+  const [localTags, setLocalTags] = useState<TagItem[]>(allTags);
 
   const {
     register,
@@ -59,12 +62,29 @@ export function ArticleEditor({ article, allTags, onClose, onSaved }: Props) {
       .catch(() => {});
   }, [article, setValue]);
 
+  // Sync localTags with allTags prop when it changes
+  useEffect(() => {
+    setLocalTags(allTags);
+  }, [allTags]);
+
   const tags = watch("tags");
 
   const toggleTag = (slug: string) => {
     const set = new Set(tags);
     set.has(slug) ? set.delete(slug) : set.add(slug);
     setValue("tags", Array.from(set));
+  };
+
+  const addNewTag = () => {
+    if (newTagName.trim()) {
+      const slug = newTagName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      // Store the original name, not the slug
+      toggleTag(newTagName.trim());
+      // Add the new tag to local tags list
+      setLocalTags([...localTags, { name: newTagName.trim(), slug }]);
+      setNewTagName("");
+      setShowAddTagModal(false);
+    }
   };
 
   const onSubmit = async (values: ArticleInput) => {
@@ -124,29 +144,40 @@ export function ArticleEditor({ article, allTags, onClose, onSaved }: Props) {
           </div>
 
           <div className="flex flex-wrap gap-2">
-            {allTags.map((t) => (
-              <button
+            {localTags.map((t) => (
+              <div
                 key={t.slug}
-                type="button"
-                onClick={() => toggleTag(t.slug)}
-                className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+                className={`flex items-center gap-1 rounded-full border px-3 py-1 text-xs transition-colors ${
                   tags.includes(t.slug)
                     ? "border-accent bg-accent text-bg"
                     : "border-border text-muted hover:text-fg"
                 }`}
               >
-                #{t.name}
-              </button>
+                <button
+                  type="button"
+                  onClick={() => toggleTag(t.slug)}
+                  className="hover:opacity-70"
+                >
+                  #{t.name}
+                </button>
+                {tags.includes(t.slug) && (
+                  <button
+                    type="button"
+                    onClick={() => toggleTag(t.slug)}
+                    className="hover:opacity-70"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
             ))}
             <button
               type="button"
-              onClick={() => {
-                const name = prompt("New tag name");
-                if (name) toggleTag(name.toLowerCase().replace(/[^a-z0-9]+/g, "-"));
-              }}
-              className="rounded-full border border-dashed border-border px-3 py-1 text-xs text-muted hover:text-fg"
+              onClick={() => setShowAddTagModal(true)}
+              className="flex items-center gap-1 rounded-full border border-dashed border-border px-3 py-1 text-xs text-muted hover:text-fg"
             >
-              + tag
+              <Plus className="h-3 w-3" />
+              tag
             </button>
           </div>
 
@@ -178,6 +209,46 @@ export function ArticleEditor({ article, allTags, onClose, onSaved }: Props) {
           </div>
         </form>
       </div>
+
+      {showAddTagModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-2xl">
+            <h3 className="mb-4 font-heading text-lg font-bold text-fg">Add new tag</h3>
+            <input
+              type="text"
+              value={newTagName}
+              onChange={(e) => setNewTagName(e.target.value)}
+              placeholder="Tag name"
+              className="w-full rounded border border-border bg-bg px-3 py-2 text-fg outline-none focus:border-accent"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addNewTag();
+                }
+              }}
+            />
+            <div className="mt-4 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAddTagModal(false);
+                  setNewTagName("");
+                }}
+                className="rounded border border-border px-4 py-2 text-sm text-muted hover:text-fg"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={addNewTag}
+                className="rounded bg-accent px-4 py-2 text-sm font-semibold text-bg transition-opacity hover:opacity-90"
+              >
+                Add
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

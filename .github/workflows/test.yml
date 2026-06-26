@@ -28,21 +28,32 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Generate Prisma client
+        run: bun run db:generate
+
+      - name: Setup test database
+        run: bun run test:db:setup
+
       - name: Type check
         run: bun run typecheck
 
       - name: Lint
         run: bun run lint
 
-      - name: Run tests
-        run: bun run test
+      - name: Run unit tests
+        run: bun run test:unit
         env:
           NODE_ENV: test
           DATABASE_PROVIDER: sqlite
-          DATABASE_URL: "file:./test.db"
+          DATABASE_URL: "file:./test.sqlite"
           REDIS_URL: "redis://localhost:6379"
+          REDIS_KEY_PREFIX: "test:"
+          CACHE_DRIVER: memory
           SESSION_SECRET: test-secret-for-ci
           ADMIN_PASSWORD: test-password
+          LOG_LEVEL: trace
+          LOG_TO_CONSOLE: true
+          LOG_TO_FILE: false
 
       - name: Upload coverage
         if: matrix.os == 'ubuntu-latest'

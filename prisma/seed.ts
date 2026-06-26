@@ -34,7 +34,7 @@ async function main() {
   const tags = await Promise.all(
     tagNames.map((name) =>
       prisma.tag.upsert({
-        where: { name },
+        where: { slug: slugify(name) },
         update: {},
         create: { name, slug: slugify(name) },
       }),

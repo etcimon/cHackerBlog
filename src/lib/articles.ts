@@ -31,6 +31,10 @@ export interface FeedPage {
     preview: string;
     /** Full body only included for the very first feed item. */
     content?: string;
+    /** Whether the article is pinned to the top of the feed. */
+    pinned: boolean;
+    /** Timestamp when the article was pinned. */
+    pinnedAt: string | null;
   }>;
   nextCursor: string | null;
 }
@@ -101,7 +105,7 @@ async function connectTags(names: string[]) {
   const tags = await Promise.all(
     unique.map((name) =>
       prisma.tag.upsert({
-        where: { name },
+        where: { slug: slugify(name) },
         update: {},
         create: { name, slug: slugify(name) },
       }),
@@ -109,6 +113,8 @@ async function connectTags(names: string[]) {
   );
   return tags.map((t) => ({ id: t.id }));
 }
+
+export { connectTags };
 
 export async function createArticle(input: ArticleInput) {
   const tagConnect = await connectTags(input.tags);
@@ -136,6 +142,20 @@ export async function createArticle(input: ArticleInput) {
 
 export async function updateArticle(id: string, input: ArticleInput) {
   const tagConnect = await connectTags(input.tags);
+  
+  // Get current article to disconnect existing tags
+  const currentArticle = await prisma.article.findUnique({
+    where: { id },
+    include: { tags: true },
+  });
+  
+  if (!currentArticle) {
+    throw new Error("Article not found");
+  }
+  
+  // Disconnect all existing tags
+  const disconnect = currentArticle.tags.map((tag) => ({ id: tag.id }));
+  
   const article = await prisma.article.update({
     where: { id },
     data: {
@@ -144,7 +164,10 @@ export async function updateArticle(id: string, input: ArticleInput) {
       coverUrl: input.coverUrl || null,
       locale: input.locale,
       published: input.published,
-      tags: { set: tagConnect },
+      tags: {
+        disconnect,
+        connect: tagConnect,
+      },
     },
     include: { tags: true },
   });
@@ -161,4 +184,17 @@ export async function deleteArticle(id: string) {
 
 export async function listAllTags() {
   return prisma.tag.findMany({ orderBy: { name: "asc" } });
+}
+
+export async function deleteTag(slug: string) {
+  // Check if tag is used by any articles
+  const articleCount = await prisma.article.count({
+    where: { tags: { some: { slug } } },
+  });
+  
+  if (articleCount > 0) {
+    throw new Error(`Cannot delete tag: ${articleCount} article(s) use this tag`);
+  }
+  
+  await prisma.tag.delete({ where: { slug } });
 }

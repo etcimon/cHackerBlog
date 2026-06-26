@@ -5,6 +5,7 @@
 
 # Bun
 bun.lockb
+bun.lock
 
 # Next.js
 /.next/
@@ -40,10 +41,17 @@ logs/
 *.log
 pm2-*.log
 
+# Application logs
+logs/*.log
+
 # Testing
 /coverage
 .nyc_output
 *.lcov
+/test-logs
+/test.sqlite
+/test.sqlite-journal
+/public/test-uploads
 
 # TypeScript
 *.tsbuildinfo
@@ -80,3 +88,4 @@ lerna-debug.log*
 .parcel-cache
 .temp
 .tmp
+bun.lock

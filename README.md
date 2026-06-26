@@ -60,6 +60,20 @@ cHackerBlog is designed as a modern, performant blogging platform that prioritiz
 - **Rate Limiting:** Cloudflare-aware rate limiting with configurable windows
 - **Authentication:** Secure admin authentication with bcrypt password hashing
 
+## Screenshots
+
+### Blog Home Page
+
+![Blog Home](screenshots/blog-home.png)
+
+The home page features an infinite scroll feed with the distinctive green-on-black hacker terminal aesthetic. Articles display with preview text, tags, and full-text expansion on scroll.
+
+### Article Editor
+
+![Article Editor](screenshots/edit-modal.png)
+
+The WYSIWYG editor provides rich text editing with live markdown preview, image uploads, and a clean interface for creating and editing articles.
+
 ## Tech Stack
 
 ### Core Runtime
@@ -169,6 +183,21 @@ bun run dev
 ```
 
 Visit <http://localhost:3000>. On first boot, you'll be redirected to `/setup` to configure your blog.
+
+### Generating Screenshots
+
+To generate screenshots for documentation:
+
+```bash
+# The screenshot script automatically starts the dev server
+bun run screenshots
+```
+
+Screenshots will be saved to the `screenshots/` directory. The script:
+- Starts the dev server automatically
+- Logs in as admin using the ADMIN_PASSWORD from .env
+- Captures screenshots of the blog home and edit modal
+- Cleans up by stopping the dev server when done
 
 ## Installation
 

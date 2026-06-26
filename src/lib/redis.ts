@@ -11,6 +11,7 @@ const log = createLogger("redis");
 
 const globalForRedis = globalThis as unknown as {
   redis: Redis | undefined;
+  connectionErrorLogged: boolean;
 };
 
 export const redis =
@@ -25,9 +26,19 @@ export const redis =
   });
 
 if (!isProd) globalForRedis.redis = redis;
+if (!globalForRedis.connectionErrorLogged) globalForRedis.connectionErrorLogged = false;
 
 redis.on("error", (err) => {
   // Do not throw — Redis is a performance/limit aid, not a hard dependency.
   // Callers fall back to the in-memory cache (see lib/cache.ts).
-  log.warn("connection error:", err.message);
+  // Only log the first connection error to avoid spamming logs.
+  if (!globalForRedis.connectionErrorLogged) {
+    log.warn("connection error:", err.message);
+    globalForRedis.connectionErrorLogged = true;
+  }
+});
+
+redis.on("connect", () => {
+  // Reset the error flag when connection is restored
+  globalForRedis.connectionErrorLogged = false;
 });

@@ -37,13 +37,20 @@ interface LoggerConfig {
 /**
  * Resolve config lazily from process.env (NOT from lib/env) to avoid a circular
  * dependency: lib/env is allowed to log validation problems. Defaults are safe.
+ * 
+ * Log level defaults:
+ * - development: trace (verbose logging for debugging)
+ * - production: error (only errors in production)
+ * - Can be overridden via LOG_LEVEL env var
  */
 function resolveConfig(): LoggerConfig {
-  const level = (process.env.LOG_LEVEL as LogLevel) || "info";
+  const nodeEnv = process.env.NODE_ENV || "development";
+  const defaultLevel = nodeEnv === "production" ? "error" : "trace";
+  const level = (process.env.LOG_LEVEL as LogLevel) || defaultLevel;
   const dir = process.env.LOG_DIR || "./logs";
   const file = process.env.LOG_FILE || "app.log";
   return {
-    level: LOG_LEVELS.includes(level) ? level : "info",
+    level: LOG_LEVELS.includes(level) ? level : defaultLevel,
     toConsole: process.env.LOG_TO_CONSOLE !== "false",
     toFile: process.env.LOG_TO_FILE !== "false",
     filePath: path.isAbsolute(file) ? file : path.join(dir, file),

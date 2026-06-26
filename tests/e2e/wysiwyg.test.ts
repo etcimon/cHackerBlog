@@ -2,7 +2,7 @@ import { setup, teardown, loginAsAdmin, seedTestData } from "./setup";
 
 describe("WYSIWYG Editor", () => {
   beforeAll(async () => {
-    await seedTestData();
+    // No setup needed for library tests
   }, 30000);
 
   it("should verify marked library is available", async () => {
