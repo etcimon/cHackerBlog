@@ -77,6 +77,7 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
   return (
     <article
       id={item.slug}
+      data-testid="article-card"
       className="animate-fade-in scroll-mt-24 border-b border-border py-10"
     >
       <header className="mb-3">
@@ -141,6 +142,7 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
         {isAdmin && onEdit && (
           <button
             onClick={() => onEdit(item)}
+            title="Edit article"
             className="inline-flex items-center gap-1.5 rounded-md border border-border px-4 py-2 text-sm text-muted transition-colors hover:text-fg"
           >
             <Pencil className="h-4 w-4" />

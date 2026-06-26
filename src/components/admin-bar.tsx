@@ -121,6 +121,7 @@ export function AdminBar({ onNewArticle }: { onNewArticle: () => void }) {
           <>
             <button
               onClick={onNewArticle}
+              title="New article"
               className="inline-flex items-center gap-1.5 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg shadow-lg transition-opacity hover:opacity-90"
             >
               <Plus className="h-4 w-4" /> New article
@@ -147,6 +148,7 @@ export function AdminBar({ onNewArticle }: { onNewArticle: () => void }) {
         ) : (
           <button
             onClick={() => setOpen(true)}
+            title="Admin"
             className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-4 py-2 text-sm text-muted shadow-lg transition-colors hover:text-fg"
           >
             <Lock className="h-4 w-4" /> Admin
@@ -179,6 +181,7 @@ export function AdminBar({ onNewArticle }: { onNewArticle: () => void }) {
               className="w-full rounded border border-border bg-bg px-3 py-2 text-fg outline-none focus:border-accent"
             />
             <button
+              type="submit"
               onClick={submit}
               disabled={busy}
               className="mt-4 w-full rounded bg-accent py-2 font-semibold text-bg transition-opacity hover:opacity-90 disabled:opacity-50"

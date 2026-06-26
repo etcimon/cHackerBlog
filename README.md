@@ -189,15 +189,17 @@ Visit <http://localhost:3000>. On first boot, you'll be redirected to `/setup` t
 To generate screenshots for documentation:
 
 ```bash
-# The screenshot script automatically starts the dev server
+# Start the dev server first
+bun run dev
+
+# In another terminal, run the screenshot script
 bun run screenshots
 ```
 
 Screenshots will be saved to the `screenshots/` directory. The script:
-- Starts the dev server automatically
+- Requires the dev server to be running on http://localhost:3000
 - Logs in as admin using the ADMIN_PASSWORD from .env
 - Captures screenshots of the blog home and edit modal
-- Cleans up by stopping the dev server when done
 
 ## Installation
 

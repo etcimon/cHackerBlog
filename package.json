@@ -27,7 +27,7 @@
     "test:e2e:verbose": "jest tests/e2e --verbose",
     "test:unit": "jest tests/unit",
     "test:unit:verbose": "jest tests/unit --verbose",
-    "screenshots": "bun run tests/screenshots/screenshot-test.ts",
+    "screenshots": "bun run scripts/screenshots.ts",
     "test:db:setup": "bun run scripts/setup-test-db.ts"
   },
   "prisma": {
