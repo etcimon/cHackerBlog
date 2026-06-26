@@ -19,7 +19,7 @@ export default async function HomePage() {
   const [initialPage, tags] = await Promise.all([getFeed({}), listAllTags()]);
 
   return (
-    <main className="mx-auto max-w-3xl px-4">
+    <main className="mx-auto max-w-5xl px-4">
       <header className="py-12 text-center">
         {settings.coverUrl && (
           // eslint-disable-next-line @next/next/no-img-element
