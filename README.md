@@ -351,6 +351,7 @@ FEED_EXPANSION_RATIO=0.5                # Expansion ratio (0-1)
 ### Theme Configuration
 
 ```env
+THEME=hacker                            # Theme preset: hacker, medium, or substack
 THEME_BG="0 0 0"                        # Background RGB
 THEME_FG="51 255 102"                   # Foreground RGB
 THEME_ACCENT="0 255 153"                # Accent RGB
@@ -361,6 +362,11 @@ THEME_FONT_BODY="'JetBrains Mono',..."   # Body font
 THEME_FONT_HEADING="'JetBrains Mono',..." # Heading font
 THEME_FONT_MONO="'JetBrains Mono',..."   # Monospace font
 ```
+
+**Available Theme Presets:**
+- `hacker` - Green-on-black terminal aesthetic (default)
+- `medium` - Clean minimalist design
+- `substack` - Warm paper-like appearance
 
 ### SMTP Configuration (Optional)
 
