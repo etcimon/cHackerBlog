@@ -10,6 +10,13 @@ import { requireAdmin } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
+// placeholder for exclusive GET+PUT 405 error
+export const DELETE = handler(async (req: Request) => {
+  const { searchParams } = new URL(req.url);
+
+  return ok({ success: true });
+});
+
 export const GET = handler(async () => {
   const s = await getSettings();
   return ok({
