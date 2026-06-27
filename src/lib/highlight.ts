@@ -12,8 +12,8 @@ export async function initHighlightJs() {
   if (hljsInitialized) return;
 
   try {
-    const module = await import("highlight.js");
-    hljsModule = module.default || module;
+    const hljsImport = await import("highlight.js");
+    hljsModule = hljsImport.default || hljsImport;
     hljsInitialized = true;
   } catch (error) {
     console.error("Failed to initialize highlight.js:", error);
