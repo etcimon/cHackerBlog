@@ -35,6 +35,8 @@ export interface FeedPage {
     pinned: boolean;
     /** Timestamp when the article was pinned. */
     pinnedAt: string | null;
+    /** Number of approved comments on the article. */
+    commentCount: number;
   }>;
   nextCursor: string | null;
 }
@@ -58,7 +60,12 @@ export async function getFeed(query: FeedQuery): Promise<FeedPage> {
       ],
       take: take + 1, // fetch one extra to compute nextCursor
       ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
-      include: { tags: { select: { slug: true } } },
+      include: { 
+        tags: { select: { slug: true } },
+        _count: {
+          select: { comments: true }
+        }
+      },
     });
 
     const hasMore = rows.length > take;
@@ -81,6 +88,7 @@ export async function getFeed(query: FeedQuery): Promise<FeedPage> {
         tags: a.tags.map((t: any) => t.slug),
         pinned: a.pinned,
         pinnedAt: a.pinnedAt?.toISOString() ?? null,
+        commentCount: a._count.comments,
         // Inline the body if expanding all, or for the first N articles of the first page.
         ...(expandAll || (isFirstPage && idx < expandedCount) ? { content: a.content } : {}),
       })),

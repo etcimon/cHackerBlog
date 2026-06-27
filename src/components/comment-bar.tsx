@@ -20,9 +20,10 @@ interface Props {
   articleId: string;
   slug: string;
   commentsEnabled?: boolean;
+  commentCount?: number;
 }
 
-export function CommentBar({ articleId, slug, commentsEnabled = true }: Props) {
+export function CommentBar({ articleId, slug, commentsEnabled = true, commentCount = 0 }: Props) {
   const [open, setOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [comments, setComments] = useState<CommentItem[]>([]);
@@ -98,7 +99,7 @@ export function CommentBar({ articleId, slug, commentsEnabled = true }: Props) {
           ) : (
             <Lock className="h-5 w-5" />
           )}
-          <span className="text-sm">{commentsEnabled ? "Comment" : "Comments disabled"}</span>
+          <span className="text-sm">{commentsEnabled ? `Comment` + (commentCount > 0 ? `s [${commentCount}]` : ``) : "Comments disabled"}</span>
         </button>
         <button
           onClick={share}
@@ -153,7 +154,12 @@ export function CommentBar({ articleId, slug, commentsEnabled = true }: Props) {
           <ul className="space-y-3">
             {comments.map((c) => (
               <li key={c.id} className="rounded border border-border bg-card p-3">
-                <p className="text-xs text-muted">{c.authorName}</p>
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-muted">{c.authorName}</p>
+                  <p className="text-xs text-muted">
+                    {new Date(c.createdAt).toLocaleDateString()} {new Date(c.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </p>
+                </div>
                 <p className="text-sm text-fg">{c.body}</p>
               </li>
             ))}

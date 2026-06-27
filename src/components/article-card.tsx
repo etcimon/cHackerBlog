@@ -93,16 +93,24 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
               </span>
             ))}
           </div>
-          {isAdmin && (
-            <button
-              onClick={handlePin}
-              disabled={pinning}
-              className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-muted transition-colors hover:text-fg disabled:opacity-50"
-              title={pinned ? "Unpin article" : "Pin article"}
-            >
-              {pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {pinned && (
+              <div className="inline-flex items-center gap-1.5 rounded-md border border-accent bg-accent/10 px-3 py-1.5 text-xs text-accent">
+                <Pin className="h-3.5 w-3.5" />
+                <span className="font-semibold">Pinned</span>
+              </div>
+            )}
+            {isAdmin && (
+              <button
+                onClick={handlePin}
+                disabled={pinning}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-muted transition-colors hover:text-fg disabled:opacity-50"
+                title={pinned ? "Unpin article" : "Pin article"}
+              >
+                {pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
+              </button>
+            )}
+          </div>
         </div>
         <h2 className="font-heading text-3xl font-bold leading-tight text-fg">
           {item.title}
@@ -151,7 +159,7 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
         )}
       </div>
 
-      {open && <CommentBar articleId={item.id} slug={item.slug} commentsEnabled={commentsEnabled} />}
+      {open && <CommentBar articleId={item.id} slug={item.slug} commentsEnabled={commentsEnabled} commentCount={item.commentCount} />}
     </article>
   );
 }
