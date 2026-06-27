@@ -121,13 +121,30 @@ export function Feed({ initialPage, tags, prefetchPages, expandedCount, expandAl
   }, [cursor, activeTag, prefetchPages, fetchPage]);
 
   const handleSaved = useCallback(async () => {
+    const editingId = editing?.id;
     setEditing(null);
     setCreating(false);
     // Refresh tags after article save
     const updatedTags = await api.get<TagItem[]>("/api/tags");
     setAllTags(updatedTags);
-    selectTag(activeTag); // refresh feed in place
-  }, [activeTag, selectTag]);
+    await selectTag(activeTag); // refresh feed in place
+
+    // If we were editing an article, fetch the updated version and set it back
+    // so that clicking edit again loads the fresh data
+    if (editingId) {
+      try {
+        const updatedPage = await fetchPage({ reset: true });
+        if (updatedPage) {
+          const updatedArticle = updatedPage.items.find(item => item.id === editingId);
+          if (updatedArticle) {
+            setEditing(updatedArticle);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch updated article:", err);
+      }
+    }
+  }, [activeTag, selectTag, editing?.id, fetchPage]);
 
   return (
     <>
