@@ -1,14 +1,11 @@
 import puppeteer, { Browser, Page } from "puppeteer";
 import { PrismaClient } from "@prisma/client";
-import { spawn } from "child_process";
 import { config } from "dotenv";
 
 // Load test environment variables
 config({ path: ".env.test" });
 
 const prisma = new PrismaClient();
-
-let devServer: ReturnType<typeof spawn> | null = null;
 
 export interface TestContext {
   browser: Browser;
@@ -18,77 +15,24 @@ export interface TestContext {
 
 async function truncateDatabase(): Promise<void> {
   console.log("Truncating test database...");
-  
+
   // Delete all data from all tables in the correct order (respecting foreign keys)
   await prisma.comment.deleteMany();
   await prisma.article.deleteMany();
   await prisma.tag.deleteMany();
   await prisma.siteSettings.deleteMany();
-  
+
   console.log("Test database truncated");
 }
 
 export async function setup(): Promise<TestContext> {
   console.log("Setting up e2e test environment...");
-  
+
   // Truncate database before tests
   await truncateDatabase();
-  
+
   // Seed test data after truncation
   await seedTestData();
-  
-  // Start dev server if not already running
-  if (!devServer) {
-    console.log("Starting dev server for e2e tests...");
-    devServer = spawn("bun", ["run", "dev"], {
-      cwd: process.cwd(),
-      stdio: "pipe",
-      env: { ...process.env, NODE_ENV: "development" },
-    });
-
-    // Wait for server to be ready
-    await new Promise<void>((resolve, reject) => {
-      let ready = false;
-      const timeout = setTimeout(() => {
-        if (!ready) {
-          console.error("Server startup timeout");
-          reject(new Error("Server startup timeout"));
-        }
-      }, 30000);
-
-      if (devServer) {
-        if (devServer.stdout) {
-          devServer.stdout.on("data", (data) => {
-            const output = data.toString();
-            if (output.includes("Ready in")) {
-              ready = true;
-              clearTimeout(timeout);
-              console.log("Dev server ready");
-              resolve();
-            }
-          });
-        }
-
-        if (devServer.stderr) {
-          devServer.stderr.on("data", (data) => {
-            const output = data.toString();
-            if (output.includes("Ready in")) {
-              ready = true;
-              clearTimeout(timeout);
-              console.log("Dev server ready");
-              resolve();
-            }
-          });
-        }
-
-        devServer.on("error", (err) => {
-          clearTimeout(timeout);
-          console.error("Server error:", err);
-          reject(err);
-        });
-      }
-    });
-  }
 
   const browser = await puppeteer.launch({
     headless: true,
@@ -104,41 +48,48 @@ export async function setup(): Promise<TestContext> {
 export async function teardown(context: TestContext): Promise<void> {
   console.log("Tearing down e2e test environment...");
   await context.browser.close();
-  
-  // Stop dev server
-  if (devServer) {
-    console.log("Stopping dev server...");
-    devServer.kill("SIGTERM");
-    devServer = null;
-  }
 }
 
 export async function loginAsAdmin(context: TestContext): Promise<void> {
   const { page, baseUrl } = context;
-  
+
   // Navigate to home page (login is a modal on the home page)
-  await page.goto(`${baseUrl}/`, { waitUntil: "networkidle0", timeout: 10000 });
-  
+  await page.goto(`${baseUrl}/`, { waitUntil: "networkidle0", timeout: 15000 });
+
   // Wait for the page to load
   try {
     // Click admin button to open login modal
     const adminButton = await page.$('button[title="Admin"]');
-    if (adminButton) {
-      await adminButton.click();
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      // Fill in admin credentials
-      const passwordInput = await page.$('input[type="password"], input[name="password"]');
-      if (passwordInput) {
-        await passwordInput.type(process.env.ADMIN_PASSWORD || "changeme");
-        
-        // Submit form
-        const submitButton = await page.$('button[type="submit"]');
-        if (submitButton) {
-          await submitButton.click();
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-      }
+    if (!adminButton) {
+      console.log("Admin button not found - might already be logged in or page not loaded");
+      return;
+    }
+    await adminButton.click();
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Fill in admin credentials
+    const passwordInput = await page.$('input[type="password"], input[name="password"]');
+    if (!passwordInput) {
+      console.log("Password input not found in login modal");
+      return;
+    }
+    await passwordInput.type(process.env.ADMIN_PASSWORD || "changeme");
+
+    // Submit form by clicking the Unlock button (which has type="submit")
+    const submitButton = await page.$('button[type="submit"]');
+    if (!submitButton) {
+      console.log("Submit button not found in login modal");
+      return;
+    }
+    await submitButton.click();
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // Verify login succeeded by checking for New article button
+    const newArticleBtn = await page.$('button[title="New article"]');
+    if (newArticleBtn) {
+      console.log("Admin login successful");
+    } else {
+      console.log("Admin login may have failed - New article button not found");
     }
   } catch (error) {
     // If login fails, might be because setup is not complete or already logged in

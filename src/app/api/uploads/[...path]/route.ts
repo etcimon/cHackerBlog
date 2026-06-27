@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { readFile, stat } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
+import { CONTENT_TYPES } from '@/lib/embeds';
 
 export const runtime = 'nodejs';
 
@@ -33,20 +34,9 @@ export async function GET(
   try {
     const file = await readFile(filePath);
     
-    // Determine content type based on extension
+    // Determine content type based on extension (shared registry).
     const ext = filePath.split('.').pop()?.toLowerCase();
-    const contentTypes: Record<string, string> = {
-      jpg: 'image/jpeg',
-      jpeg: 'image/jpeg',
-      png: 'image/png',
-      gif: 'image/gif',
-      svg: 'image/svg+xml',
-      webp: 'image/webp',
-      pdf: 'application/pdf',
-      txt: 'text/plain',
-    };
-    
-    const contentType = contentTypes[ext || ''] || 'application/octet-stream';
+    const contentType = CONTENT_TYPES[ext || ''] || 'application/octet-stream';
     
     // Cache headers
     const response = new NextResponse(file, {

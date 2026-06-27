@@ -60,6 +60,89 @@ cHackerBlog is designed as a modern, performant blogging platform that prioritiz
 - **Rate Limiting:** Cloudflare-aware rate limiting with configurable windows
 - **Authentication:** Secure admin authentication with bcrypt password hashing
 
+## Custom Markdown Embedding
+
+cHackerBlog supports custom markdown syntax for embedding files, videos, and audio with optional size control.
+
+### Basic Syntax
+
+Embed any file using the `@[name](url)` syntax:
+
+```markdown
+@[document.pdf](https://example.com/document.pdf)
+@[video.mp4](https://example.com/video.mp4)
+@[audio.mp3](https://example.com/audio.mp3)
+```
+
+### Size Specifications
+
+Control the display size of embeds by adding size parameters after the filename:
+
+#### Pixel Dimensions
+
+```markdown
+@[video.mp4 640x360](https://example.com/video.mp4)
+@[document.pdf 800x600](https://example.com/document.pdf)
+```
+
+#### Percentage Width
+
+```markdown
+@[video.mp4 50%](https://example.com/video.mp4)
+@[audio.mp3 75%](https://example.com/audio.mp3)
+```
+
+#### Preset Sizes
+
+```markdown
+@[video.mp4 small](https://example.com/video.mp4)   # 320px max-width
+@[video.mp4 medium](https://example.com/video.mp4)  # 640px max-width
+@[video.mp4 large](https://example.com/video.mp4)   # 960px max-width
+```
+
+#### Named Parameters
+
+```markdown
+@[video.mp4 width=640](https://example.com/video.mp4)
+@[video.mp4 width=640 height=360](https://example.com/video.mp4)
+```
+
+### Supported File Types
+
+- **Video:** mp4, webm, mov, avi, mkv, ogv, m4v
+- **Audio:** mp3, wav, ogg, m4a, flac, aac, opus
+- **Documents:** pdf, doc, docx, odt, rtf, txt, md
+- **Spreadsheets:** xls, xlsx, csv, ods
+- **Slides:** ppt, pptx, odp
+- **Archives:** zip, rar, 7z, tar, gz
+
+### Editor Integration
+
+The WYSIWYG editor supports both rich text and markdown modes:
+
+- **Rich Text Mode:** Click the paperclip icon to upload files, which automatically generates the embed syntax
+- **Markdown Mode:** Type the embed syntax directly with size specifications
+- **Round-Trip:** Switch between modes without losing size information
+- **Live Preview:** See rendered embeds with correct sizing in real-time
+
+### Example Usage
+
+```markdown
+# My Article
+
+Here's a PDF document with a custom size:
+
+@[report.pdf 640x480](https://example.com/report.pdf)
+
+And a video at 50% width:
+
+@[demo.mp4 50%](https://example.com/demo.mp4)
+
+Or use a preset for quick sizing:
+
+@[tutorial.mp4 medium](https://example.com/tutorial.mp4)
+```
+
 ## Screenshots
 
 ### Blog Home Page

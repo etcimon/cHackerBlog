@@ -16,6 +16,7 @@ import {
   Code2,
   Quote,
   Image as ImageIcon,
+  Paperclip,
   Type,
   Eye,
   EyeOff,
@@ -25,17 +26,29 @@ import { useToast } from "@/components/toast";
 // Markdown <-> HTML conversion (client-side only).
 import { marked } from "marked";
 import TurndownService from "turndown";
+import {
+  FILE_ACCEPT,
+  buildEmbedHtml,
+  buildEmbedMarkdown,
+  registerEmbedExtension,
+  addEmbedTurndownRule,
+} from "@/lib/embeds";
 
 interface Props {
   value: string;
   onChange: (html: string) => void;
 }
 
+// Enable the `@[name](url)` attachment tag in markdown rendering globally.
+registerEmbedExtension(marked);
+
 const turndown = new TurndownService({ headingStyle: "atx" });
+addEmbedTurndownRule(turndown);
 
 export function Wysiwyg({ value, onChange }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const attachRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
   const [mode, setMode] = useState<"rich" | "md">("rich");
   const [md, setMd] = useState("");
@@ -54,6 +67,15 @@ export function Wysiwyg({ value, onChange }: Props) {
     }
   }, [mode]);
 
+  // When in markdown mode, convert markdown to HTML and emit to parent
+  // This ensures the parent always has the HTML representation for saving
+  useEffect(() => {
+    if (mode === "md" && md) {
+      const html = marked(md) as string;
+      onChange(html);
+    }
+  }, [md, mode, onChange]);
+
   // When toggling to md, convert current HTML → md.
   const toggleToMd = useCallback(() => {
     const html = ref.current?.innerHTML ?? value;
@@ -66,6 +88,8 @@ export function Wysiwyg({ value, onChange }: Props) {
       headingStyle: "atx",
       codeBlockStyle: "fenced",
     });
+    // Register the embed rule so embed HTML collapses back to @[name](url)
+    addEmbedTurndownRule(turndownService);
     const markdown = turndownService.turndown(html);
     setMd(markdown);
     setMode("md");
@@ -87,6 +111,16 @@ export function Wysiwyg({ value, onChange }: Props) {
     (command: string, arg?: string) => {
       document.execCommand(command, false, arg);
       ref.current?.focus();
+      if (ref.current) onChange(ref.current.innerHTML);
+    },
+    [onChange],
+  );
+
+  // Insert raw HTML at the caret (rich mode) and emit the updated value.
+  const insertHtml = useCallback(
+    (html: string) => {
+      ref.current?.focus();
+      document.execCommand("insertHTML", false, `${html}<p><br></p>`);
       if (ref.current) onChange(ref.current.innerHTML);
     },
     [onChange],
@@ -115,6 +149,27 @@ export function Wysiwyg({ value, onChange }: Props) {
       }
     },
     [exec, mode, toast],
+  );
+
+  // Upload an arbitrary file (document/video/audio/archive) and insert an
+  // attachment embed. Works in both rich and markdown modes.
+  const handleFileUpload = useCallback(
+    async (file: File) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      try {
+        const { url } = await api.post<{ url: string }>("/api/upload", fd);
+        if (mode === "rich") {
+          insertHtml(buildEmbedHtml({ name: file.name, src: url }));
+        } else {
+          setMd((prev) => `${prev}\n\n${buildEmbedMarkdown({ name: file.name, src: url })}\n\n`);
+        }
+        toast.success("File uploaded");
+      } catch (err) {
+        toast.error(err instanceof ApiClientError ? err.message : "Upload failed");
+      }
+    },
+    [insertHtml, mode, toast],
   );
 
   const Btn = ({
@@ -180,9 +235,14 @@ export function Wysiwyg({ value, onChange }: Props) {
             </>
           )}
         </div>
-        <Btn title="Insert image" onClick={() => fileRef.current?.click()}>
-          <ImageIcon className="h-4 w-4" />
-        </Btn>
+        <div className="flex items-center gap-1">
+          <Btn title="Insert image" onClick={() => fileRef.current?.click()}>
+            <ImageIcon className="h-4 w-4" />
+          </Btn>
+          <Btn title="Attach file (video, audio, document…)" onClick={() => attachRef.current?.click()}>
+            <Paperclip className="h-4 w-4" />
+          </Btn>
+        </div>
         <input
           ref={fileRef}
           type="file"
@@ -191,6 +251,17 @@ export function Wysiwyg({ value, onChange }: Props) {
           onChange={(e) => {
             const f = e.target.files?.[0];
             if (f) void handleUpload(f);
+            e.target.value = "";
+          }}
+        />
+        <input
+          ref={attachRef}
+          type="file"
+          accept={FILE_ACCEPT}
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void handleFileUpload(f);
             e.target.value = "";
           }}
         />
