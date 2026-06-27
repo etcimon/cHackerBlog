@@ -49,9 +49,9 @@ describe("WYSIWYG Article Editing", () => {
   }, 100);
 
   it("should verify database articles can be edited", async () => {
-    const { PrismaClient } = await import("../../src/generated/prisma/client/client.js");
-    const { PrismaBetterSqlite3 } = await import("@prisma/adapter-better-sqlite3");
-    const adapter = new PrismaBetterSqlite3({ url: "file:./test.sqlite" });
+    const { PrismaClient } = await import("../../src/generated/prisma/client/client");
+    const { PrismaLibSql } = await import("@prisma/adapter-libsql");
+    const adapter = new PrismaLibSql({ url: "file:./test.sqlite" });
     const client = new PrismaClient({ adapter });
     
     // Get first article

@@ -1,12 +1,12 @@
 import puppeteer, { Browser, Page } from "puppeteer";
-import { PrismaClient } from "../../src/generated/prisma/client/client.js";
-import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
+import { PrismaClient } from "../../src/generated/prisma/client/client";
+import { PrismaLibSql } from "@prisma/adapter-libsql";
 import { config } from "dotenv";
 
 // Load test environment variables
 config({ path: ".env.test" });
 
-const adapter = new PrismaBetterSqlite3({ url: "file:./test.sqlite" });
+const adapter = new PrismaLibSql({ url: "file:./test.sqlite" });
 const prisma = new PrismaClient({ adapter });
 
 export interface TestContext {

@@ -5,19 +5,19 @@
  * Run with: bun run db:seed
  */
 import "dotenv/config";
-import { PrismaClient } from "../src/generated/prisma/client/client.js";
+import { PrismaClient } from "../src/generated/prisma/client/client";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
+import { PrismaLibSql } from "@prisma/adapter-libsql";
 
 const DATABASE_PROVIDER = process.env.DATABASE_PROVIDER || "sqlite";
 const DATABASE_URL = process.env.DATABASE_URL || "file:./dev.db";
 
-let adapter: PrismaPg | PrismaBetterSqlite3;
+let adapter: PrismaPg | PrismaLibSql;
 
 if (DATABASE_PROVIDER === "postgresql") {
   adapter = new PrismaPg({ connectionString: DATABASE_URL });
 } else {
-  adapter = new PrismaBetterSqlite3({ url: DATABASE_URL });
+  adapter = new PrismaLibSql({ url: DATABASE_URL });
 }
 
 const prisma = new PrismaClient({ adapter });

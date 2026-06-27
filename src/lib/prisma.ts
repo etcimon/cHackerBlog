@@ -5,9 +5,9 @@
  *
  * For testing, use setTestPrisma() to inject a test client.
  */
-import { PrismaClient } from "../generated/prisma/client/client.js";
+import { PrismaClient } from "../generated/prisma/client/client";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
+import { PrismaLibSql } from "@prisma/adapter-libsql";
 import { isProd, env } from "@/lib/env";
 
 const globalForPrisma = globalThis as unknown as {
@@ -15,12 +15,12 @@ const globalForPrisma = globalThis as unknown as {
   testPrisma: PrismaClient | undefined;
 };
 
-let adapter: PrismaPg | PrismaBetterSqlite3;
+let adapter: PrismaPg | PrismaLibSql;
 
 if (env.DATABASE_PROVIDER === "postgresql") {
   adapter = new PrismaPg({ connectionString: env.DATABASE_URL });
 } else {
-  adapter = new PrismaBetterSqlite3({ url: env.DATABASE_URL });
+  adapter = new PrismaLibSql({ url: env.DATABASE_URL });
 }
 
 function createPrismaClient(): PrismaClient {

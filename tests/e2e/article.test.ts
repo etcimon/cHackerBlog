@@ -12,9 +12,9 @@ describe("Article Creation and Editing", () => {
   }, 10000);
 
   it("should verify database has articles", async () => {
-    const { PrismaClient } = await import("../../src/generated/prisma/client/client.js");
-    const { PrismaBetterSqlite3 } = await import("@prisma/adapter-better-sqlite3");
-    const adapter = new PrismaBetterSqlite3({ url: "file:./test.sqlite" });
+    const { PrismaClient } = await import("../../src/generated/prisma/client/client");
+    const { PrismaLibSql } = await import("@prisma/adapter-libsql");
+    const adapter = new PrismaLibSql({ url: "file:./test.sqlite" });
     const client = new PrismaClient({ adapter });
     
     const articles = await client.article.findMany();
@@ -24,9 +24,9 @@ describe("Article Creation and Editing", () => {
   }, 10000);
 
   it("should verify articles have required fields", async () => {
-    const { PrismaClient } = await import("../../src/generated/prisma/client/client.js");
-    const { PrismaBetterSqlite3 } = await import("@prisma/adapter-better-sqlite3");
-    const adapter = new PrismaBetterSqlite3({ url: "file:./test.sqlite" });
+    const { PrismaClient } = await import("../../src/generated/prisma/client/client");
+    const { PrismaLibSql } = await import("@prisma/adapter-libsql");
+    const adapter = new PrismaLibSql({ url: "file:./test.sqlite" });
     const client = new PrismaClient({ adapter });
     
     const articles = await client.article.findMany();

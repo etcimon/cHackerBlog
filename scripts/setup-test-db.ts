@@ -1,5 +1,5 @@
-import { PrismaClient } from "../src/generated/prisma/client/client.js";
-import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
+import { PrismaClient } from "../src/generated/prisma/client/client";
+import { PrismaLibSql } from "@prisma/adapter-libsql";
 import { execSync } from "child_process";
 
 async function setupTestDatabase() {
