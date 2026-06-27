@@ -42,6 +42,6 @@ export const POST = handler(async (req: Request) => {
   await mkdir(dir, { recursive: true });
   await writeFile(path.join(dir, name), buffer);
 
-  // UPLOAD_DIR lives under /public, so the public URL is /uploads/<name>.
-  return ok({ url: `/uploads/${name}` }, 201);
+  // UPLOAD_DIR lives under /public, so the public URL is /api/uploads/<name>.
+  return ok({ url: `/api/uploads/${name}` }, 201);
 });

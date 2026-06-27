@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  // Allow self-hosted uploaded images served from /uploads and remote covers.
+  // Allow self-hosted uploaded images served from /api/uploads and remote covers.
   images: {
     remotePatterns: [{ protocol: "https", hostname: "**" }],
   },
