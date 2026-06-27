@@ -533,7 +533,7 @@ const ATTACHMENT_RULE = /^@\[([^\]]+)\]\(\s*([^)\s]+)\s*\)/;
  * Idempotent per-instance via a private flag.
  */
 export function registerEmbedExtension(marked: {
-  use: (...args: unknown[]) => unknown;
+  use: (...args: import("marked").MarkedExtension[]) => typeof marked;
 }): void {
   const flagged = marked as unknown as { __cbEmbed?: boolean };
   if (flagged.__cbEmbed) return;
@@ -587,8 +587,9 @@ export function registerEmbedExtension(marked: {
             size,
           };
         },
-        renderer(token: { name: string; href: string; size?: EmbedSize }) {
-          return buildEmbedHtml({ name: token.name, src: token.href, size: token.size });
+        renderer(token: import("marked").Tokens.Generic) {
+          const typedToken = token as unknown as { name: string; href: string; size?: EmbedSize };
+          return buildEmbedHtml({ name: typedToken.name, src: typedToken.href, size: typedToken.size });
         },
       },
     ],
