@@ -13,6 +13,11 @@ const eslintConfig = [
   ...compat.extends("next/core-web-vitals"),
   {
     ignores: ["node_modules/**", ".next/**", "out/**", "build/**", "next-env.d.ts", "prisma/**", "scripts/**", "tests/**", "*.config.ts", "*.d.ts"]
+  },
+  {
+    rules: {
+      "@next/next/no-duplicate-head": "off"
+    }
   }
 ];
 
