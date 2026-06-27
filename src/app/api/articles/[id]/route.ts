@@ -11,24 +11,27 @@ import { requireAdmin } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
-type Ctx = { params: { id: string } };
+type Ctx = { params: Promise<{ id: string }> };
 
 export const GET = handler<Ctx>(async (_req, { params }) => {
-  const body = await getArticleBody(params.id);
+  const { id } = await params;
+  const body = await getArticleBody(id);
   if (!body) throw Errors.notFound("Article not found");
   return ok(body);
 });
 
 export const PUT = handler<Ctx>(async (req, { params }) => {
   requireAdmin();
+  const { id } = await params;
   const json = await req.json().catch(() => ({}));
   const input = articleInputSchema.parse(json);
-  const article = await updateArticle(params.id, input);
+  const article = await updateArticle(id, input);
   return ok({ id: article.id, slug: article.slug });
 });
 
 export const DELETE = handler<Ctx>(async (_req, { params }) => {
   requireAdmin();
-  await deleteArticle(params.id);
+  const { id } = await params;
+  await deleteArticle(id);
   return ok({ deleted: true });
 });

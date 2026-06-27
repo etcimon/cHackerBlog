@@ -10,15 +10,16 @@ import { invalidate } from "@/lib/cache";
 
 export const runtime = "nodejs";
 
-export const POST = handler(async (req: Request, { params }: { params: { id: string } }) => {
+export const POST = handler(async (req: Request, { params }: { params: Promise<{ id: string }> }) => {
   requireAdmin();
+  const { id } = await params;
   const article = await prisma.article.findUnique({
-    where: { id: params.id },
+    where: { id },
   });
   if (!article) throw Errors.notFound("Article not found");
 
   const updated = await prisma.article.update({
-    where: { id: params.id },
+    where: { id },
     data: {
       pinned: true,
       pinnedAt: new Date(),
@@ -29,15 +30,16 @@ export const POST = handler(async (req: Request, { params }: { params: { id: str
   return ok({ pinned: updated.pinned, pinnedAt: updated.pinnedAt });
 });
 
-export const DELETE = handler(async (req: Request, { params }: { params: { id: string } }) => {
+export const DELETE = handler(async (req: Request, { params }: { params: Promise<{ id: string }> }) => {
   requireAdmin();
+  const { id } = await params;
   const article = await prisma.article.findUnique({
-    where: { id: params.id },
+    where: { id },
   });
   if (!article) throw Errors.notFound("Article not found");
 
   const updated = await prisma.article.update({
-    where: { id: params.id },
+    where: { id },
     data: {
       pinned: false,
       pinnedAt: null,

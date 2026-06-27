@@ -8,10 +8,11 @@ export const runtime = 'nodejs';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { path: string[] } }
+  { params }: { params: Promise<{ path: string[] }> }
 ) {
   const uploadDir = process.env.UPLOAD_DIR || './public/uploads';
-  const filePath = join(process.cwd(), uploadDir, ...params.path);
+  const { path } = await params;
+  const filePath = join(process.cwd(), uploadDir, ...path);
   
   // Security check: ensure the path is within the upload directory
   const resolvedPath = join(process.cwd(), uploadDir);
