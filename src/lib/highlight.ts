@@ -13,8 +13,8 @@ export async function initHighlightJs() {
 
   try {
     // Import core instead of full highlight.js for smaller bundle
-    const module = await import("highlight.js/lib/core");
-    hljsModule = module.default || module;
+    const hljsCore = await import("highlight.js/lib/core");
+    hljsModule = hljsCore.default || hljsCore;
     hljsInitialized = true;
   } catch (error) {
     console.error("Failed to initialize highlight.js:", error);
