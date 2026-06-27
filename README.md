@@ -4,8 +4,9 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Bun](https://img.shields.io/badge/Bun-1.0+-black?style=flat&logo=bun)](https://bun.sh)
-[![Next.js](https://img.shields.io/badge/Next.js-14-black?style=flat&logo=next.js)](https://nextjs.org)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.5-blue?style=flat&logo=typescript)](https://www.typescriptlang.org)
+[![Next.js](https://img.shields.io/badge/Next.js-15-black?style=flat&logo=next.js)](https://nextjs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-blue?style=flat&logo=typescript)](https://www.typescriptlang.org)
+[![Prisma](https://img.shields.io/badge/Prisma-7-2D3748?style=flat&logo=prisma)](https://www.prisma.io)
 [![Tests](https://github.com/etcimon/chackerblog/actions/workflows/test.yml/badge.svg)](https://github.com/etcimon/chackerblog/actions/workflows/test.yml)
 
 **Repository:** <https://github.com/etcimon/chackerblog>
@@ -161,12 +162,12 @@ The WYSIWYG editor provides rich text editing with live markdown preview, image 
 
 ### Core Runtime
 - **Bun:** Fast JavaScript runtime and package manager
-- **TypeScript 5.5:** Type-safe development with strict mode
-- **Next.js 14 (App Router):** React framework with server components and streaming
+- **TypeScript 5.6:** Type-safe development with strict mode
+- **Next.js 15 (App Router):** React framework with server components and streaming
 - **React 18:** UI library with hooks and concurrent features
 
 ### Data & Caching
-- **Prisma ORM 5.18:** Type-safe database access with migrations
+- **Prisma ORM 7:** Type-safe database access with migrations
 - **SQLite:** Local development database
 - **PostgreSQL:** Production database (recommended)
 - **ioredis 5.4:** Redis client for caching and rate limiting
