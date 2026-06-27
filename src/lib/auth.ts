@@ -55,9 +55,10 @@ export async function checkPassword(password: string): Promise<boolean> {
 }
 
 /** Issue the admin session cookie. */
-export function createSession(): void {
+export async function createSession(): Promise<void> {
   const token = sign(String(Date.now()));
-  cookies().set(COOKIE_NAME, token, {
+  const cookieStore = await cookies();
+  cookieStore.set(COOKIE_NAME, token, {
     httpOnly: true,
     secure: isProd,
     sameSite: "lax",
@@ -66,16 +67,18 @@ export function createSession(): void {
   });
 }
 
-export function destroySession(): void {
-  cookies().delete(COOKIE_NAME);
+export async function destroySession(): Promise<void> {
+  const cookieStore = await cookies();
+  cookieStore.delete(COOKIE_NAME);
 }
 
-export function isAdmin(): boolean {
-  const token = cookies().get(COOKIE_NAME)?.value;
+export async function isAdmin(): Promise<boolean> {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(COOKIE_NAME)?.value;
   return token ? verify(token) : false;
 }
 
 /** Throw 401 unless the current request carries a valid admin session. */
-export function requireAdmin(): void {
-  if (!isAdmin()) throw Errors.unauthorized("Admin session required");
+export async function requireAdmin(): Promise<void> {
+  if (!(await isAdmin())) throw Errors.unauthorized("Admin session required");
 }

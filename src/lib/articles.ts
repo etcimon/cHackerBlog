@@ -3,7 +3,7 @@
  * filter) and admin CRUD. Feed pages are memoized in the "feed" cache category;
  * single articles in the "article" category. Mutations invalidate both.
  */
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { remember, invalidate } from "@/lib/cache";
 import { env } from "@/lib/env";
 import type { ArticleInput, FeedQuery } from "@/lib/schemas";
@@ -47,6 +47,7 @@ export async function getFeed(query: FeedQuery): Promise<FeedPage> {
   const cacheId = `t=${query.tag ?? ""}|l=${query.locale ?? ""}|c=${query.cursor ?? ""}|n=${take}|ea=${env.FEED_EXPAND_ALL}|ec=${env.FEED_EXPANDED_COUNT}`;
 
   return remember<FeedPage>("feed", cacheId, async () => {
+    const prisma = getPrisma();
     const rows = await prisma.article.findMany({
       where: {
         published: true,
@@ -85,7 +86,7 @@ export async function getFeed(query: FeedQuery): Promise<FeedPage> {
         coverUrl: a.coverUrl,
         locale: a.locale,
         publishedAt: a.publishedAt.toISOString(),
-        tags: a.tags.map((t: any) => t.slug),
+        tags: a.tags.map((t: { slug: string }) => t.slug),
         pinned: a.pinned,
         pinnedAt: a.pinnedAt?.toISOString() ?? null,
         commentCount: a._count.comments,
@@ -100,6 +101,7 @@ export async function getFeed(query: FeedQuery): Promise<FeedPage> {
 /** Fetch a single article's full body (used by in-place "full text" expansion). */
 export async function getArticleBody(id: string): Promise<{ content: string } | null> {
   return remember("article", id, async () => {
+    const prisma = getPrisma();
     const a = await prisma.article.findUnique({
       where: { id },
       select: { content: true, published: true },
@@ -109,6 +111,7 @@ export async function getArticleBody(id: string): Promise<{ content: string } | 
 }
 
 async function connectTags(names: string[]) {
+  const prisma = getPrisma();
   const unique = Array.from(new Set(names.map((n) => n.trim()).filter(Boolean)));
   const tags = await Promise.all(
     unique.map((name) =>
@@ -125,6 +128,7 @@ async function connectTags(names: string[]) {
 export { connectTags };
 
 export async function createArticle(input: ArticleInput) {
+  const prisma = getPrisma();
   const tagConnect = await connectTags(input.tags);
   const baseSlug = slugify(input.title) || "untitled";
   // Ensure slug uniqueness.
@@ -149,6 +153,7 @@ export async function createArticle(input: ArticleInput) {
 }
 
 export async function updateArticle(id: string, input: ArticleInput) {
+  const prisma = getPrisma();
   const tagConnect = await connectTags(input.tags);
   
   // Get current article to disconnect existing tags
@@ -162,7 +167,7 @@ export async function updateArticle(id: string, input: ArticleInput) {
   }
   
   // Disconnect all existing tags
-  const disconnect = currentArticle.tags.map((tag) => ({ id: tag.id }));
+  const disconnect = currentArticle.tags.map((tag: { id: string }) => ({ id: tag.id }));
   
   const article = await prisma.article.update({
     where: { id },
@@ -185,16 +190,19 @@ export async function updateArticle(id: string, input: ArticleInput) {
 }
 
 export async function deleteArticle(id: string) {
+  const prisma = getPrisma();
   await prisma.article.delete({ where: { id } });
   await invalidate("article", id);
   await invalidate("feed");
 }
 
 export async function listAllTags() {
+  const prisma = getPrisma();
   return prisma.tag.findMany({ orderBy: { name: "asc" } });
 }
 
 export async function deleteTag(slug: string) {
+  const prisma = getPrisma();
   // Check if tag is used by any articles
   const articleCount = await prisma.article.count({
     where: { tags: { some: { slug } } },

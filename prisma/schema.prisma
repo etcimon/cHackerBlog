@@ -7,12 +7,12 @@
 // The `url` is env-driven via DATABASE_URL.
 
 generator client {
-  provider = "prisma-client-js"
+  provider = "prisma-client"
+  output   = "../src/generated/prisma/client"
 }
 
 datasource db {
-  provider = "sqlite" // production: change to "postgresql"
-  url      = env("DATABASE_URL")
+  provider = "sqlite"
 }
 
 /// Singleton (id = 1) holding all global blog configuration captured on the

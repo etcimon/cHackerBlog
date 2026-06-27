@@ -4,9 +4,23 @@
  *
  * Run with: bun run db:seed
  */
-import { PrismaClient } from "@prisma/client";
+import "dotenv/config";
+import { PrismaClient } from "../src/generated/prisma/client/client.js";
+import { PrismaPg } from "@prisma/adapter-pg";
+import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 
-const prisma = new PrismaClient();
+const DATABASE_PROVIDER = process.env.DATABASE_PROVIDER || "sqlite";
+const DATABASE_URL = process.env.DATABASE_URL || "file:./dev.db";
+
+let adapter: PrismaPg | PrismaBetterSqlite3;
+
+if (DATABASE_PROVIDER === "postgresql") {
+  adapter = new PrismaPg({ connectionString: DATABASE_URL });
+} else {
+  adapter = new PrismaBetterSqlite3({ url: DATABASE_URL });
+}
+
+const prisma = new PrismaClient({ adapter });
 
 function slugify(input: string): string {
   return input
