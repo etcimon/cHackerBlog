@@ -12,7 +12,8 @@ export async function initHighlightJs() {
   if (hljsInitialized) return;
 
   try {
-    const module = await import("highlight.js");
+    // Import core instead of full highlight.js for smaller bundle
+    const module = await import("highlight.js/lib/core");
     hljsModule = module.default || module;
     hljsInitialized = true;
   } catch (error) {
@@ -69,25 +70,21 @@ export async function loadHighlightJsLanguage(language: string): Promise<void> {
 
     const hljsLang = langMap[language.toLowerCase()] || language.toLowerCase();
 
-    // Check if language is already available in core hljs
+    // Check if language is already registered
     if (hljsModule && hljsModule.getLanguage(hljsLang)) {
       loadedLanguages.add(language);
       return;
     }
 
-    // Try to load from ESM path
-    try {
-      await import(`highlight.js/es/languages/${hljsLang}`);
-      loadedLanguages.add(language);
-    } catch {
-      // Fallback: try with .js extension
-      try {
-        await import(`highlight.js/lib/languages/${hljsLang}.js`);
-        loadedLanguages.add(language);
-      } catch (e) {
-        console.warn(`Failed to load highlight.js language: ${language}`, e);
-      }
-    }
+    // Load language using correct exports path without .js extension
+    const langModule = await import(`highlight.js/lib/languages/${hljsLang}`);
+
+    // Some languages export the function directly, others use .default
+    const langDefinition = langModule.default ?? langModule;
+
+    // Register the language with hljs
+    hljsModule.registerLanguage(hljsLang, langDefinition);
+    loadedLanguages.add(language);
   } catch (error) {
     console.warn(`Failed to load highlight.js language: ${language}`, error);
   }
