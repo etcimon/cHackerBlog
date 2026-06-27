@@ -17,8 +17,10 @@ describe("Feed and Infinite Scroll", () => {
   }, 100);
 
   it("should verify database has seeded articles", async () => {
-    const { PrismaClient } = await import("@prisma/client");
-    const client = new PrismaClient();
+    const { PrismaClient } = await import("../../src/generated/prisma/client/client.js");
+    const { PrismaBetterSqlite3 } = await import("@prisma/adapter-better-sqlite3");
+    const adapter = new PrismaBetterSqlite3({ url: "file:./test.sqlite" });
+    const client = new PrismaClient({ adapter });
     
     const articles = await client.article.findMany();
     expect(articles.length).toBeGreaterThan(0);
@@ -27,8 +29,10 @@ describe("Feed and Infinite Scroll", () => {
   }, 10000);
 
   it("should verify setup is marked complete", async () => {
-    const { PrismaClient } = await import("@prisma/client");
-    const client = new PrismaClient();
+    const { PrismaClient } = await import("../../src/generated/prisma/client/client.js");
+    const { PrismaBetterSqlite3 } = await import("@prisma/adapter-better-sqlite3");
+    const adapter = new PrismaBetterSqlite3({ url: "file:./test.sqlite" });
+    const client = new PrismaClient({ adapter });
     
     const settings = await client.siteSettings.findUnique({ where: { id: 1 } });
     expect(settings?.setupComplete).toBe(true);

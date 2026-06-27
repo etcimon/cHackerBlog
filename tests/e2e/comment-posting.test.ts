@@ -36,8 +36,10 @@ describe("Comment Posting", () => {
   }, 100);
 
   it("should verify database has comments table", async () => {
-    const { PrismaClient } = await import("@prisma/client");
-    const client = new PrismaClient();
+    const { PrismaClient } = await import("../../src/generated/prisma/client/client.js");
+    const { PrismaBetterSqlite3 } = await import("@prisma/adapter-better-sqlite3");
+    const adapter = new PrismaBetterSqlite3({ url: "file:./test.sqlite" });
+    const client = new PrismaClient({ adapter });
     
     // Verify the Comment model exists by trying to query it
     const comments = await client.comment.findMany({ take: 1 });
@@ -47,8 +49,10 @@ describe("Comment Posting", () => {
   }, 10000);
 
   it("should verify comments can be created in database when enabled", async () => {
-    const { PrismaClient } = await import("@prisma/client");
-    const client = new PrismaClient();
+    const { PrismaClient } = await import("../../src/generated/prisma/client/client.js");
+    const { PrismaBetterSqlite3 } = await import("@prisma/adapter-better-sqlite3");
+    const adapter = new PrismaBetterSqlite3({ url: "file:./test.sqlite" });
+    const client = new PrismaClient({ adapter });
     
     // Ensure COMMENTS_ENABLED is true
     const originalCommentsEnabled = process.env.COMMENTS_ENABLED;
