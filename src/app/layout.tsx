@@ -7,6 +7,7 @@
  */
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import Script from "next/script";
 import "@/styles/globals.scss";
 import { getSettings } from "@/lib/settings";
 import { activeTheme } from "@/lib/theme";

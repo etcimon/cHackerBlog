@@ -59,8 +59,11 @@ export function ArticleEditor({ article, allTags, onClose, onSaved }: Props) {
         setContent(d.content);
         setValue("content", d.content);
       })
-      .catch(() => {});
-  }, [article, setValue]);
+      .catch((err) => {
+        console.error("Failed to load article:", err);
+        toast.error(err instanceof ApiClientError ? err.message : "Failed to load article");
+      });
+  }, [article, setValue, toast]);
 
   // Sync localTags with allTags prop when it changes
   useEffect(() => {

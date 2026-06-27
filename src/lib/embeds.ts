@@ -616,4 +616,49 @@ export function addEmbedTurndownRule(turndown: {
       return `\n\n${buildEmbedMarkdown({ name, src, size })}\n\n`;
     },
   });
+
+  // Add rule for code blocks to preserve language class and preview lines
+  turndown.addRule("codeBlock", {
+    filter: (node: HTMLElement) =>
+      node.nodeType === 1 &&
+      node.nodeName === "PRE" &&
+      node.firstChild?.nodeName === "CODE",
+    replacement: (_content: string, node: HTMLElement) => {
+      const code = node.firstChild as HTMLElement;
+      const classList = code.className;
+      const langMatch = classList.match(/language-(\w+)/);
+      const lang = langMatch ? langMatch[1] : "";
+
+      // Extract code content without extra whitespace
+      const codeContent = code.textContent || "";
+
+      // Check if this is inside a code-block-wrapper with preview-lines
+      const wrapper = node.parentElement;
+      const previewLines = wrapper?.getAttribute("data-preview-lines");
+
+      if (previewLines) {
+        return `\`\`\`${lang} preview=${previewLines}\n${codeContent}\n\`\`\``;
+      }
+
+      return `\`\`\`${lang}\n${codeContent}\n\`\`\``;
+    },
+  });
+
+  // Add rule to skip code block wrapper buttons
+  turndown.addRule("codeBlockButton", {
+    filter: (node: HTMLElement) =>
+      node.nodeType === 1 &&
+      node.nodeName === "BUTTON" &&
+      node.classList.contains("code-expand-btn"),
+    replacement: () => "",
+  });
+
+  // Add rule to skip code block wrapper div
+  turndown.addRule("codeBlockWrapper", {
+    filter: (node: HTMLElement) =>
+      node.nodeType === 1 &&
+      node.nodeName === "DIV" &&
+      node.classList.contains("code-block-wrapper"),
+    replacement: (content: string) => content,
+  });
 }
