@@ -140,6 +140,19 @@ Write-Host ""
 $envExample = Get-Content ".env.example" -Raw
 $envContent = $envExample
 
+# Prompt for theme selection
+Write-Host "Select theme:" -ForegroundColor Cyan
+Write-Host "  (1) hacker   - Green-on-black terminal aesthetic (default)" -ForegroundColor White
+Write-Host "  (2) medium   - Clean minimalist design" -ForegroundColor White
+Write-Host "  (3) substack - Warm paper-like appearance" -ForegroundColor White
+$themeChoice = Read-Host "Theme [1]"
+switch ($themeChoice) {
+    "2" { $theme = "medium" }
+    "3" { $theme = "substack" }
+    default { $theme = "hacker" }
+}
+Write-Host "Selected theme: $theme" -ForegroundColor Green
+
 # Prompt for configuration
 $envType = Read-Host "Environment type (development/production) [development]"
 if ([string]::IsNullOrWhiteSpace($envType)) { $envType = "development" }
@@ -194,6 +207,7 @@ if ([string]::IsNullOrWhiteSpace($adminPassword)) { $adminPassword = "changeme" 
 # Replace values in .env content
 $envContent = $envContent -replace 'NODE_ENV=development', "NODE_ENV=$envType"
 $envContent = $envContent -replace 'APP_URL=http://localhost:3000', "APP_URL=$appUrl"
+$envContent = $envContent -replace 'THEME=hacker', "THEME=$theme"
 $envContent = $envContent -replace 'DATABASE_PROVIDER=sqlite', "DATABASE_PROVIDER=$dbProvider"
 $envContent = $envContent -replace 'DATABASE_URL="file:./dev.db"', "DATABASE_URL=`"$dbUrl`""
 $envContent = $envContent -replace 'REDIS_URL=redis://localhost:6379', "REDIS_URL=$redisUrl"

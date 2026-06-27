@@ -137,6 +137,19 @@ echo ""
 env_example=$(cat .env.example)
 env_content="$env_example"
 
+# Prompt for theme selection
+echo -e "${CYAN}Select theme:${NC}"
+echo -e "${WHITE}  (1) hacker   - Green-on-black terminal aesthetic (default)${NC}"
+echo -e "${WHITE}  (2) medium   - Clean minimalist design${NC}"
+echo -e "${WHITE}  (3) substack - Warm paper-like appearance${NC}"
+read -p "Theme [1]: " theme_choice
+case "$theme_choice" in
+    2) theme="medium" ;;
+    3) theme="substack" ;;
+    *) theme="hacker" ;;
+esac
+echo -e "${GREEN}Selected theme: $theme${NC}"
+
 # Prompt for configuration
 read -p "Environment type (development/production) [development]: " env_type
 env_type=${env_type:-development}
@@ -192,6 +205,7 @@ admin_password=${admin_password:-changeme}
 # Replace values in .env content
 env_content=$(echo "$env_content" | sed "s/NODE_ENV=development/NODE_ENV=$env_type/")
 env_content=$(echo "$env_content" | sed "s|APP_URL=http://localhost:3000|APP_URL=$app_url|")
+env_content=$(echo "$env_content" | sed "s/THEME=hacker/THEME=$theme/")
 env_content=$(echo "$env_content" | sed "s/DATABASE_PROVIDER=sqlite/DATABASE_PROVIDER=$db_provider/")
 env_content=$(echo "$env_content" | sed "s|DATABASE_URL=\"file:./dev.db\"|DATABASE_URL=\"$db_url\"|")
 env_content=$(echo "$env_content" | sed "s|REDIS_URL=redis://localhost:6379|REDIS_URL=$redis_url|")

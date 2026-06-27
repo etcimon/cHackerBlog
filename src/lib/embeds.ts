@@ -533,8 +533,7 @@ const ATTACHMENT_RULE = /^@\[([^\]]+)\]\(\s*([^)\s]+)\s*\)/;
  * Idempotent per-instance via a private flag.
  */
 export function registerEmbedExtension(marked: {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  use: (...args: any[]) => unknown;
+  use: (...args: unknown[]) => unknown;
 }): void {
   const flagged = marked as unknown as { __cbEmbed?: boolean };
   if (flagged.__cbEmbed) return;
