@@ -68,9 +68,26 @@ export async function loadHighlightJsLanguage(language: string): Promise<void> {
     };
 
     const hljsLang = langMap[language.toLowerCase()] || language.toLowerCase();
-    // Import without .js extension as per highlight.js package exports
-    await import(`highlight.js/lib/languages/${hljsLang}`);
-    loadedLanguages.add(language);
+
+    // Check if language is already available in core hljs
+    if (hljsModule && hljsModule.getLanguage(hljsLang)) {
+      loadedLanguages.add(language);
+      return;
+    }
+
+    // Try to load from ESM path
+    try {
+      await import(`highlight.js/es/languages/${hljsLang}`);
+      loadedLanguages.add(language);
+    } catch {
+      // Fallback: try with .js extension
+      try {
+        await import(`highlight.js/lib/languages/${hljsLang}.js`);
+        loadedLanguages.add(language);
+      } catch (e) {
+        console.warn(`Failed to load highlight.js language: ${language}`, e);
+      }
+    }
   } catch (error) {
     console.warn(`Failed to load highlight.js language: ${language}`, error);
   }
