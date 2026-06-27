@@ -13,6 +13,26 @@ const boolish = z
   .transform((v) => v === true || v === "true" || v === "1")
   .pipe(z.boolean());
 
+/** Parse size strings like "200M", "1G", "500K" to bytes. */
+const sizeBytes = z
+  .string()
+  .transform((val) => {
+    const match = val.match(/^(\d+(?:\.\d+)?)([KMG])?$/i);
+    if (!match) {
+      throw new Error(`Invalid size format: ${val}. Use format like "200M", "1G", "500K"`);
+    }
+    const num = parseFloat(match[1]);
+    const unit = (match[2] || "").toUpperCase();
+    const multipliers: Record<string, number> = {
+      "": 1,
+      K: 1024,
+      M: 1024 * 1024,
+      G: 1024 * 1024 * 1024,
+    };
+    return Math.floor(num * (multipliers[unit] || 1));
+  })
+  .pipe(z.number().int().positive());
+
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   APP_URL: z.string().url().default("http://localhost:3000"),
@@ -89,7 +109,7 @@ const schema = z.object({
 
   // Uploads
   UPLOAD_DIR: z.string().default("./public/uploads"),
-  UPLOAD_MAX_BYTES: z.coerce.number().int().positive().default(5_242_880),
+  UPLOAD_MAX_SIZE: sizeBytes.default("200M"),
 
   // Comments
   COMMENTS_ENABLED: boolish.default(true),

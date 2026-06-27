@@ -5,8 +5,8 @@
  *   DELETE -> admin delete.
  */
 import { handler, ok, Errors } from "@/lib/errors";
-import { articleInputSchema } from "@/lib/schemas";
-import { getArticleBody, updateArticle, deleteArticle } from "@/lib/articles";
+import { articleInputSchema, articlePartialUpdateSchema } from "@/lib/schemas";
+import { getArticleBody, updateArticle, deleteArticle, updateArticlePartial } from "@/lib/articles";
 import { requireAdmin } from "@/lib/auth";
 
 export const runtime = "nodejs";
@@ -24,6 +24,15 @@ export const PUT = handler<Ctx>(async (req, { params }) => {
   requireAdmin();
   const { id } = await params;
   const json = await req.json().catch(() => ({}));
+
+  // Check if this is a partial update (only published field)
+  if (Object.keys(json).length === 1 && "published" in json) {
+    const input = articlePartialUpdateSchema.parse(json);
+    const article = await updateArticlePartial(id, input);
+    return ok({ id: article.id, slug: article.slug, published: article.published });
+  }
+
+  // Full article update
   const input = articleInputSchema.parse(json);
   const article = await updateArticle(id, input);
   return ok({ id: article.id, slug: article.slug });

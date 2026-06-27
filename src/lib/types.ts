@@ -14,6 +14,7 @@ export interface FeedItem {
   content?: string;
   pinned: boolean;
   pinnedAt: string | null;
+  published: boolean;
   commentCount: number;
 }
 

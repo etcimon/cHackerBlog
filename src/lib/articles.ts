@@ -35,6 +35,8 @@ export interface FeedPage {
     pinned: boolean;
     /** Timestamp when the article was pinned. */
     pinnedAt: string | null;
+    /** Whether the article is published. */
+    published: boolean;
     /** Number of approved comments on the article. */
     commentCount: number;
   }>;
@@ -44,9 +46,61 @@ export interface FeedPage {
 /** Recency-ordered, tag-filterable cursor feed. */
 export async function getFeed(query: FeedQuery): Promise<FeedPage> {
   const take = query.take ?? env.FEED_PAGE_SIZE;
-  const cacheId = `t=${query.tag ?? ""}|l=${query.locale ?? ""}|c=${query.cursor ?? ""}|n=${take}|ea=${env.FEED_EXPAND_ALL}|ec=${env.FEED_EXPANDED_COUNT}`;
+  const cacheId = `t=${query.tag ?? ""}|l=${query.locale ?? ""}|c=${query.cursor ?? ""}|n=${take}|ea=${env.FEED_EXPAND_ALL}|ec=${env.FEED_EXPANDED_COUNT}|iu=${query.includeUnpublished ?? false}`;
+
+  // Bypass cache when including unpublished articles (admin mode)
+  if (query.includeUnpublished) {
+    console.log("[getFeed] Fetching with includeUnpublished=true");
+    const prisma = getPrisma();
+    const rows = await prisma.article.findMany({
+      where: {
+        ...(query.locale ? { locale: query.locale } : {}),
+        ...(query.tag ? { tags: { some: { slug: query.tag } } } : {}),
+      },
+      orderBy: [
+        { pinned: "desc" }, // Pinned articles first
+        { pinnedAt: "desc" }, // Most recently pinned first
+        { publishedAt: "desc" }, // Then by published date
+      ],
+      take: take + 1, // fetch one extra to compute nextCursor
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      include: {
+        tags: { select: { slug: true } },
+        _count: {
+          select: { comments: true }
+        }
+      },
+    });
+
+    console.log(`[getFeed] Found ${rows.length} articles with includeUnpublished=true`);
+    const hasMore = rows.length > take;
+    const page = hasMore ? rows.slice(0, take) : rows;
+    const isFirstPage = !query.cursor;
+    const expandAll = env.FEED_EXPAND_ALL;
+    const expandedCount = env.FEED_EXPANDED_COUNT;
+
+    return {
+      items: page.map((a, idx) => ({
+        id: a.id,
+        slug: a.slug,
+        title: a.title,
+        preview: truncateContent(a.content, env.FEED_PREVIEW_CHARS),
+        coverUrl: a.coverUrl,
+        locale: a.locale,
+        publishedAt: a.publishedAt.toISOString(),
+        tags: a.tags.map((t: { slug: string }) => t.slug),
+        pinned: a.pinned,
+        pinnedAt: a.pinnedAt?.toISOString() ?? null,
+        published: a.published,
+        commentCount: a._count.comments,
+        ...(expandAll || (isFirstPage && idx < expandedCount) ? { content: a.content } : {}),
+      })),
+      nextCursor: hasMore ? page[page.length - 1]!.id : null,
+    };
+  }
 
   return remember<FeedPage>("feed", cacheId, async () => {
+    console.log("[getFeed] Fetching with includeUnpublished=false (cached)");
     const prisma = getPrisma();
     const rows = await prisma.article.findMany({
       where: {
@@ -61,7 +115,7 @@ export async function getFeed(query: FeedQuery): Promise<FeedPage> {
       ],
       take: take + 1, // fetch one extra to compute nextCursor
       ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
-      include: { 
+      include: {
         tags: { select: { slug: true } },
         _count: {
           select: { comments: true }
@@ -89,6 +143,7 @@ export async function getFeed(query: FeedQuery): Promise<FeedPage> {
         tags: a.tags.map((t: { slug: string }) => t.slug),
         pinned: a.pinned,
         pinnedAt: a.pinnedAt?.toISOString() ?? null,
+        published: a.published,
         commentCount: a._count.comments,
         // Inline the body if expanding all, or for the first N articles of the first page.
         ...(expandAll || (isFirstPage && idx < expandedCount) ? { content: a.content } : {}),
@@ -155,20 +210,20 @@ export async function createArticle(input: ArticleInput) {
 export async function updateArticle(id: string, input: ArticleInput) {
   const prisma = getPrisma();
   const tagConnect = await connectTags(input.tags);
-  
+
   // Get current article to disconnect existing tags
   const currentArticle = await prisma.article.findUnique({
     where: { id },
     include: { tags: true },
   });
-  
+
   if (!currentArticle) {
     throw new Error("Article not found");
   }
-  
+
   // Disconnect all existing tags
   const disconnect = currentArticle.tags.map((tag: { id: string }) => ({ id: tag.id }));
-  
+
   const article = await prisma.article.update({
     where: { id },
     data: {
@@ -181,6 +236,21 @@ export async function updateArticle(id: string, input: ArticleInput) {
         disconnect,
         connect: tagConnect,
       },
+    },
+    include: { tags: true },
+  });
+  await invalidate("article", id);
+  await invalidate("feed");
+  return article;
+}
+
+export async function updateArticlePartial(id: string, input: { published?: boolean }) {
+  const prisma = getPrisma();
+
+  const article = await prisma.article.update({
+    where: { id },
+    data: {
+      ...(input.published !== undefined ? { published: input.published } : {}),
     },
     include: { tags: true },
   });

@@ -33,12 +33,19 @@ export const articleInputSchema = z.object({
 });
 export type ArticleInput = z.infer<typeof articleInputSchema>;
 
+/** Partial article update (e.g., for publish/unpublish). */
+export const articlePartialUpdateSchema = z.object({
+  published: z.boolean().optional(),
+});
+export type ArticlePartialUpdate = z.infer<typeof articlePartialUpdateSchema>;
+
 /** Feed query parameters (validated from the URL search params). */
 export const feedQuerySchema = z.object({
   cursor: z.string().optional(),
   tag: z.string().optional(),
   locale: z.string().optional(),
   take: z.coerce.number().int().positive().max(50).optional(),
+  includeUnpublished: z.coerce.boolean().optional(),
 });
 export type FeedQuery = z.infer<typeof feedQuerySchema>;
 

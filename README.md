@@ -477,8 +477,14 @@ LINKEDIN_AUTHOR_URN=your_urn
 
 ```env
 UPLOAD_DIR=./public/uploads
-UPLOAD_MAX_BYTES=5242880               # 5MB max upload size
+UPLOAD_MAX_SIZE=200M                   # Max upload size (supports K, M, G suffixes)
 ```
+
+**Size Format:**
+- `200M` = 200 megabytes (default)
+- `1G` = 1 gigabyte
+- `500K` = 500 kilobytes
+- Plain number = bytes (not recommended)
 
 ### Comments Configuration
 

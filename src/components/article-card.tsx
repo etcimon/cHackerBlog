@@ -7,7 +7,7 @@
  * reload, then animates it open.
  */
 import { useCallback, useState } from "react";
-import { ChevronDown, Pencil, Tag as TagIcon, Pin, PinOff } from "lucide-react";
+import { ChevronDown, Pencil, Tag as TagIcon, Pin, PinOff, EyeOff } from "lucide-react";
 import type { FeedItem } from "@/lib/types";
 import { api, ApiClientError } from "@/lib/api-client";
 import { useToast } from "@/components/toast";
@@ -27,6 +27,8 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
   const [loading, setLoading] = useState(false);
   const [pinned, setPinned] = useState(item.pinned);
   const [pinning, setPinning] = useState(false);
+  const [published, setPublished] = useState(item.published);
+  const [publishing, setPublishing] = useState(false);
   const toast = useToast();
   const { isAdmin } = useAdmin();
   const commentsEnabled = useCommentsEnabled();
@@ -48,6 +50,20 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
       toast.error(err instanceof ApiClientError ? err.message : "Failed to update pin status");
     } finally {
       setPinning(false);
+    }
+  };
+
+  const handlePublish = async () => {
+    setPublishing(true);
+    try {
+      await api.put(`/api/articles/${item.id}`, { published: true });
+      setPublished(true);
+      toast.success("Article published");
+      window.location.reload();
+    } catch (err) {
+      toast.error(err instanceof ApiClientError ? err.message : "Failed to publish article");
+    } finally {
+      setPublishing(false);
     }
   };
 
@@ -99,6 +115,17 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
                 <Pin className="h-3.5 w-3.5" />
                 <span className="font-semibold">Pinned</span>
               </div>
+            )}
+            {!published && isAdmin && (
+              <button
+                onClick={handlePublish}
+                disabled={publishing}
+                className="inline-flex items-center gap-1.5 rounded-md border border-orange-500 bg-orange-500/10 px-3 py-1.5 text-xs text-orange-500 transition-colors hover:bg-orange-500/20 disabled:opacity-50"
+                title="Click to publish article"
+              >
+                <EyeOff className="h-3.5 w-3.5" />
+                <span className="font-semibold">Unpublished</span>
+              </button>
             )}
             {isAdmin && (
               <button

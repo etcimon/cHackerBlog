@@ -21,6 +21,7 @@ export const GET = handler(async (req: Request) => {
     tag: url.searchParams.get("tag") ?? undefined,
     locale: url.searchParams.get("locale") ?? undefined,
     take: url.searchParams.get("take") ?? undefined,
+    includeUnpublished: url.searchParams.get("includeUnpublished") === "true",
   });
 
   const page = await getFeed(query);

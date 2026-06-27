@@ -53,7 +53,7 @@ export const POST = handler(async (req: Request) => {
   if (!ext || !ALLOWED_EXTS.has(ext)) {
     throw new AppError("Unsupported file type", 415, "UNSUPPORTED_TYPE");
   }
-  if (file.size > env.UPLOAD_MAX_BYTES) {
+  if (file.size > env.UPLOAD_MAX_SIZE) {
     throw new AppError("File too large", 413, "TOO_LARGE");
   }
 

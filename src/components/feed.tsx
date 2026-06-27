@@ -27,14 +27,15 @@ interface Props {
 }
 
 export function Feed({ initialPage, tags, prefetchPages, expandedCount, expandAll }: Props) {
-  const { isAdmin } = useAdmin();
-  const [items, setItems] = useState<FeedItem[]>(initialPage.items);
-  const [cursor, setCursor] = useState<string | null>(initialPage.nextCursor);
+  const { isAdmin, ready } = useAdmin();
+  const [items, setItems] = useState<FeedItem[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<FeedItem | null>(null);
   const [creating, setCreating] = useState(false);
   const [allTags, setAllTags] = useState<TagItem[]>(tags);
+  const [initialLoaded, setInitialLoaded] = useState(false);
 
   const sentinelRef = useRef<HTMLDivElement>(null);
   const loadingRef = useRef(false);
@@ -48,7 +49,10 @@ export function Feed({ initialPage, tags, prefetchPages, expandedCount, expandAl
         const params = new URLSearchParams();
         if (opts.cursor) params.set("cursor", opts.cursor);
         if (opts.tag) params.set("tag", opts.tag);
+        if (isAdmin) params.set("includeUnpublished", "true");
+        console.log(`[Feed fetchPage] isAdmin=${isAdmin}, params=${params.toString()}`);
         const page = await api.get<FeedPage>(`/api/feed?${params.toString()}`);
+        console.log(`[Feed fetchPage] Received ${page.items.length} items`);
         setItems((prev) => (opts.reset ? page.items : [...prev, ...page.items]));
         setCursor(page.nextCursor);
         return page;
@@ -57,7 +61,7 @@ export function Feed({ initialPage, tags, prefetchPages, expandedCount, expandAl
         setLoading(false);
       }
     },
-    [],
+    [isAdmin],
   );
 
   // Re-query when the active tag changes.
@@ -70,6 +74,32 @@ export function Feed({ initialPage, tags, prefetchPages, expandedCount, expandAl
     },
     [fetchPage],
   );
+
+  // Reload feed when admin status changes to include/exclude unpublished
+  useEffect(() => {
+    // Only reload if we have items (initial page loaded) and admin status changed
+    if (items.length > 0) {
+      setItems([]);
+      setCursor(null);
+      void fetchPage({ reset: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, fetchPage]);
+
+  // Initial load: use server-provided data if not admin, otherwise fetch with admin status
+  useEffect(() => {
+    if (!initialLoaded && ready) {
+      if (isAdmin) {
+        // Admin: fetch fresh data including unpublished
+        void fetchPage({ reset: true });
+      } else {
+        // Non-admin: use server-provided data
+        setItems(initialPage.items);
+        setCursor(initialPage.nextCursor);
+      }
+      setInitialLoaded(true);
+    }
+  }, [isAdmin, initialLoaded, ready, fetchPage, initialPage]);
 
   // Infinite scroll via IntersectionObserver, with eager multi-page prefetch.
   useEffect(() => {
