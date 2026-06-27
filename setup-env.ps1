@@ -199,6 +199,7 @@ $envContent = $envContent -replace 'DATABASE_URL="file:./dev.db"', "DATABASE_URL
 $envContent = $envContent -replace 'REDIS_URL=redis://localhost:6379', "REDIS_URL=$redisUrl"
 $envContent = $envContent -replace 'SESSION_SECRET=replace-with-a-long-random-string', "SESSION_SECRET=$sessionSecret"
 $envContent = $envContent -replace 'ADMIN_PASSWORD=changeme', "ADMIN_PASSWORD=$adminPassword"
+$envContent = $envContent -replace '^LOG_LEVEL=.*', 'LOG_LEVEL=error'
 
 # Write .env file
 $envContent | Out-File -FilePath ".env" -Encoding UTF8 -NoNewline

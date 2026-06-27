@@ -197,6 +197,7 @@ env_content=$(echo "$env_content" | sed "s|DATABASE_URL=\"file:./dev.db\"|DATABA
 env_content=$(echo "$env_content" | sed "s|REDIS_URL=redis://localhost:6379|REDIS_URL=$redis_url|")
 env_content=$(echo "$env_content" | sed "s/SESSION_SECRET=replace-with-a-long-random-string/SESSION_SECRET=$session_secret/")
 env_content=$(echo "$env_content" | sed "s/ADMIN_PASSWORD=changeme/ADMIN_PASSWORD=$admin_password/")
+env_content=$(echo "$env_content" | sed "s/^LOG_LEVEL=.*/LOG_LEVEL=error/")
 
 # Write .env file
 echo "$env_content" > .env
