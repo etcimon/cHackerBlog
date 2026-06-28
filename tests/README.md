@@ -10,6 +10,8 @@ This directory contains the test suite for cHackerBlog, including end-to-end tes
   - `wysiwyg.test.ts` - WYSIWYG editor functionality tests
   - `theme.test.ts` - Theme switching tests
   - `feed.test.ts` - Feed and infinite scroll tests
+  - `code-block-collapse.test.ts` - Code-block expand/collapse across infinite
+    scroll (10 languages/sizes) + no-flicker-after-edit regression
 
 - `unit/` - Unit tests
   - `cache.test.ts` - KV/cache layer tests

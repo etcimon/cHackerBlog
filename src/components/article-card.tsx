@@ -6,7 +6,14 @@
  * button that fetches the body in place (GET /api/articles/:id) without a
  * reload, then animates it open.
  */
-import { useCallback, useState, useEffect, useRef } from "react";
+import {
+  useCallback,
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+} from "react";
 import { ChevronDown, Pencil, Tag as TagIcon, Pin, PinOff, EyeOff } from "lucide-react";
 import type { FeedItem } from "@/lib/types";
 import { api, ApiClientError } from "@/lib/api-client";
@@ -18,7 +25,11 @@ import {
   ensureHighlightJsReady,
   highlightCodeInElement,
   wireCodeBlockToggles,
+  type CodeToggleOptions,
 } from "@/lib/highlight";
+
+// useLayoutEffect on the server logs a warning; fall back to useEffect there.
+const useIsoLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 interface Props {
   item: FeedItem;
@@ -38,18 +49,52 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
   const { isAdmin } = useAdmin();
   const commentsEnabled = useCommentsEnabled();
   const articleBodyRef = useRef<HTMLDivElement>(null);
+  // Remembers which code blocks the reader expanded, keyed by block index, so
+  // the state survives content re-injection (e.g. after an admin edit refresh).
+  const expandedBlocksRef = useRef<Set<number>>(new Set());
 
-  // Apply syntax highlighting + wire collapse toggles when content is shown.
+  // Keep the rendered body in sync with the feed item's content. Without this,
+  // an article edited in the WYSIWYG keeps showing the stale body (useState only
+  // reads its initial value once). Guard on `undefined` so lazily fetched
+  // bodies (item.content omitted by the feed API) are not wiped.
+  useEffect(() => {
+    if (item.content !== undefined) setContent(item.content);
+  }, [item.content]);
+
+  const codeToggleOptions = useMemo<CodeToggleOptions>(
+    () => ({
+      isExpanded: (i) => expandedBlocksRef.current.has(i),
+      onToggle: (i, expanded) => {
+        if (expanded) expandedBlocksRef.current.add(i);
+        else expandedBlocksRef.current.delete(i);
+      },
+    }),
+    [],
+  );
+
+  // Wire the collapse toggles synchronously after every body (re-)render. Doing
+  // this in a layout effect (not gated behind async highlighting) guarantees the
+  // toggles work no matter how many code blocks/languages are present, and
+  // re-applies the persisted expanded state before paint so it never flickers
+  // back to collapsed.
+  useIsoLayoutEffect(() => {
+    if (open && content !== undefined && articleBodyRef.current) {
+      wireCodeBlockToggles(articleBodyRef.current, codeToggleOptions);
+    }
+  }, [open, content, codeToggleOptions]);
+
+  // Apply syntax highlighting asynchronously (lazy-loads hljs + languages), then
+  // re-wire/restore in case highlighting replaced any markup.
   useEffect(() => {
     if (open && content !== undefined && articleBodyRef.current) {
       ensureHighlightJsReady(content).then(() => {
         if (articleBodyRef.current) {
           highlightCodeInElement(articleBodyRef.current);
-          wireCodeBlockToggles(articleBodyRef.current);
+          wireCodeBlockToggles(articleBodyRef.current, codeToggleOptions);
         }
       });
     }
-  }, [open, content]);
+  }, [open, content, codeToggleOptions]);
 
   const handlePin = async () => {
     setPinning(true);

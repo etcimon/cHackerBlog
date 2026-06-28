@@ -178,25 +178,60 @@ export function highlightCodeInElement(element: HTMLElement): void {
   });
 }
 
+export interface CodeToggleOptions {
+  /**
+   * Return whether the collapsible block at `index` (its position among all
+   * `.cb-code` wrappers in the element) should currently be expanded. Used to
+   * restore state after the body HTML is re-injected by React.
+   */
+  isExpanded?: (index: number) => boolean;
+  /** Notified whenever the user toggles a block, so callers can persist state. */
+  onToggle?: (index: number, expanded: boolean) => void;
+}
+
+/** Apply the expanded/collapsed classes + ARIA to a wrapper/button pair. */
+function applyToggleState(wrap: Element, btn: Element, expanded: boolean): void {
+  wrap.classList.toggle("expanded", expanded);
+  wrap.classList.toggle("collapsed", !expanded);
+  btn.setAttribute("aria-label", expanded ? "Collapse code" : "Expand code");
+  btn.setAttribute("aria-expanded", expanded ? "true" : "false");
+}
+
 /**
  * Wire the collapse/expand toggle bars for code blocks within an element.
- * Idempotent per-button (guards via a data flag) so it is safe to call after
- * every re-render. Toggling swaps the `.collapsed`/`.expanded` classes on the
+ *
+ * Idempotent per-button (guarded via a data flag) so it is safe to call after
+ * every render. Toggling swaps the `.collapsed`/`.expanded` classes on the
  * `.cb-code` wrapper; all visual changes (height, caret rotation, scroll) are
  * driven from CSS.
+ *
+ * When `options.isExpanded` is supplied, the persisted state is re-applied on
+ * every call. This is what keeps a block expanded across React re-renders that
+ * re-inject the article body via `dangerouslySetInnerHTML` (otherwise the block
+ * would visibly flicker back to collapsed after an edit/refresh).
  */
-export function wireCodeBlockToggles(element: HTMLElement): void {
-  const toggles = element.querySelectorAll<HTMLElement>(".cb-code__toggle");
-  toggles.forEach((btn) => {
+export function wireCodeBlockToggles(
+  element: HTMLElement,
+  options: CodeToggleOptions = {},
+): void {
+  // Index across all `.cb-code` wrappers (collapsible or not) so the index is a
+  // stable key for the persisted-state callbacks regardless of block count.
+  const wraps = element.querySelectorAll<HTMLElement>(".cb-code");
+  wraps.forEach((wrap, index) => {
+    const btn = wrap.querySelector<HTMLElement>(".cb-code__toggle");
+    if (!btn) return; // non-collapsible block: nothing to wire
+
+    // Restore persisted state on every (re)wire so it survives re-injection.
+    if (options.isExpanded) {
+      applyToggleState(wrap, btn, options.isExpanded(index));
+    }
+
     if (btn.dataset.wired === "1") return;
     btn.dataset.wired = "1";
     btn.addEventListener("click", () => {
-      const wrap = btn.closest(".cb-code");
-      if (!wrap) return;
-      const collapsed = wrap.classList.toggle("collapsed");
-      wrap.classList.toggle("expanded", !collapsed);
-      btn.setAttribute("aria-label", collapsed ? "Expand code" : "Collapse code");
-      btn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      const expanded = !wrap.classList.contains("expanded");
+      applyToggleState(wrap, btn, expanded);
+      options.onToggle?.(index, expanded);
     });
   });
 }
