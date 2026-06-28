@@ -88,6 +88,11 @@ const schema = z.object({
   // Styling lives in SCSS, not in the database settings.
   THEME: z.enum(["hacker", "medium", "substack"]).default("hacker"),
 
+  // Code syntax-highlighting theme (any highlight.js stylesheet name, e.g.
+  // "github", "monokai", "nord", "atom-one-dark"). The special default
+  // "github" auto-resolves to "github-dark" on dark site themes (hacker).
+  CODE_THEME: z.string().default("github"),
+
   // Mailer
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.coerce.number().int().positive().default(587),

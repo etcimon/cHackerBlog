@@ -26,19 +26,22 @@ import { useToast } from "@/components/toast";
 // Markdown <-> HTML conversion (client-side only).
 import { marked } from "marked";
 import TurndownService from "turndown";
-import { ChevronDown, ChevronUp } from "lucide-react";
 import {
   FILE_ACCEPT,
   buildEmbedHtml,
   buildEmbedMarkdown,
   registerEmbedExtension,
   addEmbedTurndownRule,
+  parseSizeSpec,
+  sizeSpecToString,
+  type EmbedSize,
 } from "@/lib/embeds";
 import {
   initHighlightJs,
   loadHighlightJsCss,
   loadHighlightJsLanguage,
   getHljsModule,
+  wireCodeBlockToggles,
 } from "@/lib/highlight";
 
 interface Props {
@@ -65,76 +68,181 @@ function extractLanguages(markdown: string): string[] {
   return Array.from(languages);
 }
 
-// Parse code block info string to extract language and preview lines
-// Format: "language preview=N" or just "language"
-function parseCodeBlockInfo(info: string): { language: string; previewLines?: number } {
-  const parts = info.trim().split(/\s+/);
-  const language = parts[0] || "plaintext";
-  const previewMatch = info.match(/preview=(\d+)/);
-  const previewLines = previewMatch ? parseInt(previewMatch[1], 10) : undefined;
-  return { language, previewLines };
+// Parse a code block info string into its language, optional preview/collapse
+// line count, and optional size. Tokens after the language can appear in any
+// order, e.g. "ts small preview=5", "python width=300 collapse=8".
+// `preview` and `collapse` are aliases; the keyword used is preserved so the
+// HTML round-trips back to the same markdown via turndown.
+interface CodeBlockInfo {
+  language: string;
+  previewLines?: number;
+  collapseKind: "preview" | "collapse";
+  size: EmbedSize;
+}
+
+function parseCodeBlockInfo(info: string): CodeBlockInfo {
+  const trimmed = info.trim();
+  const tokens = trimmed.split(/\s+/).filter(Boolean);
+  const language = tokens[0] || "plaintext";
+
+  let previewLines: number | undefined;
+  let collapseKind: "preview" | "collapse" = "preview";
+  const pc = trimmed.match(/\b(preview|collapse)=(\d+)/i);
+  if (pc) {
+    collapseKind = pc[1].toLowerCase() as "preview" | "collapse";
+    previewLines = parseInt(pc[2], 10);
+  }
+
+  // Everything after the language, minus the preview/collapse token, is treated
+  // as a size spec (small/medium/large, width=N, WxH, N%).
+  const sizeSpec = tokens
+    .slice(1)
+    .filter((t) => !/^(preview|collapse)=\d+$/i.test(t))
+    .join(" ")
+    .trim();
+  const size: EmbedSize = sizeSpec ? parseSizeSpec(sizeSpec) : { type: "none" };
+
+  return { language, previewLines, collapseKind, size };
+}
+
+// Escape raw code for safe insertion when highlight.js hasn't highlighted it.
+function escapeCode(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+// Human-friendly labels for the language header; unknown ids are upper-cased.
+const LANG_LABELS: Record<string, string> = {
+  javascript: "JavaScript",
+  typescript: "TypeScript",
+  tsx: "TSX",
+  jsx: "JSX",
+  python: "Python",
+  ruby: "Ruby",
+  bash: "Bash",
+  shell: "Shell",
+  json: "JSON",
+  yaml: "YAML",
+  xml: "HTML",
+  html: "HTML",
+  css: "CSS",
+  scss: "SCSS",
+  markdown: "Markdown",
+  cpp: "C++",
+  csharp: "C#",
+  fsharp: "F#",
+  go: "Go",
+  rust: "Rust",
+  kotlin: "Kotlin",
+  swift: "Swift",
+  java: "Java",
+  php: "PHP",
+  sql: "SQL",
+  d: "D",
+  plaintext: "Text",
+};
+
+function langLabel(lang: string): string {
+  const key = (lang || "plaintext").toLowerCase();
+  return LANG_LABELS[key] || lang.toUpperCase();
+}
+
+// Lucide "code" glyph for the language header.
+const CODE_ICON_SVG =
+  "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"16 18 22 12 16 6\"></polyline><polyline points=\"8 6 2 12 8 18\"></polyline></svg>";
+
+// Downward caret (rotated to point up via CSS in the expanded state).
+const CARET_SVG =
+  "<svg class=\"cb-code__caret\" xmlns=\"http://www.w3.org/2000/svg\" width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"6 9 12 15 18 9\"></polyline></svg>";
+
+// Map a parsed size into a CSS class + inline style for the code wrapper.
+function codeSizeStyle(size: EmbedSize): { cls: string; style: string } {
+  switch (size.type) {
+    case "pixels":
+      return { cls: "cb-code--size-pixels", style: `max-width:${size.width}px;` };
+    case "percent":
+      return { cls: "cb-code--size-percent", style: `width:${size.width}%;` };
+    case "preset":
+      return { cls: `cb-code--size-${size.size}`, style: "" };
+    default:
+      return { cls: "", style: "" };
+  }
+}
+
+/**
+ * Build the rendered HTML for a code block. Every block gets a header showing a
+ * code icon + the language name. When a preview/collapse count is given and the
+ * code is longer than it, a bottom toggle bar is appended and the block starts
+ * collapsed; the collapsed height is N lines expressed in `em` (font-size
+ * aware) via the `--cb-preview-lines` custom property. Optional sizes constrain
+ * the block width. `contenteditable="false"` keeps the chrome clickable and
+ * atomic inside the rich-text surface.
+ */
+function buildCodeBlock(
+  bodyHtml: string,
+  lang: string,
+  totalLines: number,
+  info: Pick<CodeBlockInfo, "previewLines" | "collapseKind" | "size">,
+  highlighted = false,
+): string {
+  const { previewLines, collapseKind, size } = info;
+  const codeClass = `language-${lang}${highlighted ? " hljs" : ""}`;
+  const collapsible = !!previewLines && totalLines > previewLines;
+
+  const { cls: sizeCls, style: sizeStyle } = codeSizeStyle(size);
+  const sizeSpec = size.type !== "none" ? sizeSpecToString(size) : "";
+
+  const header =
+    `<div class="cb-code__header" contenteditable="false">` +
+    `<span class="cb-code__lang-icon">${CODE_ICON_SVG}</span>` +
+    `<span class="cb-code__lang">${langLabel(lang)}</span>` +
+    `</div>`;
+
+  const pre = `<pre class="cb-code__pre"><code class="${codeClass}">${bodyHtml}</code></pre>`;
+
+  const toggle = collapsible
+    ? `<button class="cb-code__toggle" type="button" contenteditable="false" ` +
+      `aria-label="Expand code" aria-expanded="false">${CARET_SVG}</button>`
+    : "";
+
+  const wrapperClass = `cb-code${collapsible ? " collapsed" : ""}${sizeCls ? ` ${sizeCls}` : ""}`;
+
+  const styleParts: string[] = [];
+  if (sizeStyle) styleParts.push(sizeStyle);
+  if (collapsible) styleParts.push(`--cb-preview-lines:${previewLines};`);
+  const styleAttr = styleParts.length ? ` style="${styleParts.join(" ")}"` : "";
+
+  const dataAttrs =
+    `data-lines="${totalLines}"` +
+    (collapsible ? ` data-preview-lines="${previewLines}" data-collapse-kind="${collapseKind}"` : "") +
+    (sizeSpec ? ` data-size="${sizeSpec}"` : "");
+
+  return `<div class="${wrapperClass}" ${dataAttrs}${styleAttr}>${header}${pre}${toggle}</div>`;
 }
 
 // Configure marked to use highlight.js for syntax highlighting (lazy-loaded)
 marked.use({
   renderer: {
     code(code: string, language: string | undefined) {
-      const { language: lang, previewLines } = parseCodeBlockInfo(language || "");
+      const { language: lang, previewLines, collapseKind, size } = parseCodeBlockInfo(language || "");
+      const totalLines = code.split("\n").length;
       const hljs = getHljsModule();
 
-      // Determine if we should use hljs-dark (for hacker theme)
-      const theme = typeof document !== "undefined" ? document.documentElement.getAttribute("data-theme") : "hacker";
-      const hljsClass = theme === "hacker" ? "hljs-dark" : "hljs";
-
-      // If highlight.js is not loaded yet, return plain code
+      // If highlight.js isn't loaded yet, emit escaped plain code (the wrapper
+      // is re-rendered once hljs becomes ready).
       if (!hljs) {
-        if (previewLines) {
-          const lines = code.split("\n");
-          const isCollapsed = lines.length > previewLines;
-          const collapsedHeight = `${previewLines * 1.5}em`; // Approx 1.5em per line
-          return `
-            <div class="code-block-wrapper collapsed" data-lines="${lines.length}" data-preview-lines="${previewLines}">
-              <pre data-preview-lines="${previewLines}" style="--preview-height: ${collapsedHeight};"><code class="language-${lang}">${code}</code></pre>
-              ${isCollapsed ? `
-                <button class="code-expand-btn" type="button">
-                  <span class="icon"><svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'></polyline></svg></span>
-                  <span class="text">Expand</span>
-                </button>
-              ` : ""}
-            </div>
-          `;
-        }
-        return `<pre><code class="language-${lang}">${code}</code></pre>`;
+        return buildCodeBlock(escapeCode(code), lang, totalLines, { previewLines, collapseKind, size }, false);
       }
 
-      // Check if the language is registered
       const validLang = lang && hljs.getLanguage(lang) ? lang : "plaintext";
-
       try {
         const highlighted = hljs.highlight(code, { language: validLang }).value;
-
-        if (previewLines) {
-          const lines = code.split("\n");
-          const isCollapsed = lines.length > previewLines;
-          const collapsedHeight = `${previewLines * 1.5}em`; // Approx 1.5em per line
-          return `
-            <div class="code-block-wrapper collapsed" data-lines="${lines.length}" data-preview-lines="${previewLines}">
-              <pre data-preview-lines="${previewLines}" style="--preview-height: ${collapsedHeight};"><code class="language-${validLang} ${hljsClass}">${highlighted}</code></pre>
-              ${isCollapsed ? `
-                <button class="code-expand-btn" type="button">
-                  <span class="icon"><svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'></polyline></svg></span>
-                  <span class="text">Expand</span>
-                </button>
-              ` : ""}
-            </div>
-          `;
-        }
-
-        return `<pre><code class="language-${validLang} ${hljsClass}">${highlighted}</code></pre>`;
+        return buildCodeBlock(highlighted, validLang, totalLines, { previewLines, collapseKind, size }, true);
       } catch (error) {
         console.error("Highlight.js error:", error);
-        // Fallback to plain code if highlighting fails
-        return `<pre><code class="language-${validLang}">${code}</code></pre>`;
+        return buildCodeBlock(escapeCode(code), validLang, totalLines, { previewLines, collapseKind, size }, false);
       }
     },
   },
@@ -154,12 +262,17 @@ export function Wysiwyg({ value, onChange }: Props) {
   const [hljsInitialized, setHljsInitialized] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
 
-  // Initialize rich content and keep it in sync with value prop.
+  // Initialize rich content and keep it in sync with value prop. Re-wire the
+  // code block collapse toggles after every sync so they work in rich mode too
+  // (e.g. right after clicking Edit on an existing article).
   useEffect(() => {
     if (ref.current && ref.current.innerHTML !== value) {
       ref.current.innerHTML = value;
     }
-  }, [value]);
+    if (mode === "rich" && ref.current) {
+      wireCodeBlockToggles(ref.current);
+    }
+  }, [value, mode]);
 
   // Clear markdown state when switching to rich mode
   useEffect(() => {
@@ -206,34 +319,13 @@ export function Wysiwyg({ value, onChange }: Props) {
     }
   }, [hljsReady, mode, md, onChange]);
 
-  // Add event listeners to code block expand buttons in preview
+  // Wire the code block collapse/expand toggle bars in the markdown preview.
+  // Re-runs whenever the rendered markdown changes or hljs becomes ready.
   useEffect(() => {
     if (mode === "md" && previewRef.current) {
-      const buttons = previewRef.current.querySelectorAll(".code-expand-btn");
-      buttons.forEach((button) => {
-        button.addEventListener("click", (e) => {
-          const target = e.currentTarget as HTMLElement;
-          const wrapper = target.closest(".code-block-wrapper") as HTMLElement;
-          if (wrapper) {
-            wrapper.classList.toggle("collapsed");
-            wrapper.classList.toggle("expanded");
-            const icon = target.querySelector(".icon");
-            const text = target.querySelector(".text");
-            if (icon && text) {
-              const isCollapsed = wrapper.classList.contains("collapsed");
-              if (isCollapsed) {
-                icon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>';
-                text.textContent = "Expand";
-              } else {
-                icon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>';
-                text.textContent = "Collapse";
-              }
-            }
-          }
-        });
-      });
+      wireCodeBlockToggles(previewRef.current);
     }
-  }, [mode, md]);
+  }, [mode, md, hljsReady]);
 
   // When toggling to md, convert current HTML → md.
   const toggleToMd = useCallback(() => {
@@ -260,9 +352,12 @@ export function Wysiwyg({ value, onChange }: Props) {
     onChange(html);
     setMd(""); // Clear markdown state when switching back to rich
     setMode("rich");
-    // Sync the contentEditable surface after render.
+    // Sync the contentEditable surface after render, then wire code toggles.
     requestAnimationFrame(() => {
-      if (ref.current) ref.current.innerHTML = html;
+      if (ref.current) {
+        ref.current.innerHTML = html;
+        wireCodeBlockToggles(ref.current);
+      }
     });
   }, [md, onChange]);
 

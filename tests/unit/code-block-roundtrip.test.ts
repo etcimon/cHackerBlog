@@ -18,34 +18,26 @@ describe("Code Block Round-trip Conversion", () => {
     expect(markdown).toContain("```");
   });
 
-  it("should preserve code blocks with collapsed class", () => {
-    const html = `<div class="code-block-wrapper collapsed" data-lines="10">
-      <pre><code class="language-javascript">const x = 5;</code></pre>
-      <button class="code-expand-btn" type="button">
-        <span class="icon"><svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'></polyline></svg></span>
-        <span class="text">Expand</span>
-      </button>
+  it("should preserve collapsible code blocks (.cb-code)", () => {
+    const html = `<div class="cb-code collapsed" data-lines="10" data-preview-lines="2" data-collapse-kind="preview">
+      <pre class="cb-code__pre" style="--cb-preview-lines:2"><code class="language-javascript hljs">const x = 5;</code></pre>
+      <button class="cb-code__toggle" type="button" aria-label="Expand code"><svg class="cb-code__caret"></svg></button>
     </div>`;
     const markdown = turndown.turndown(html);
     // Should preserve the code block content
     expect(markdown).toContain("const x = 5;");
-    // Should not include the button text in the code
-    expect(markdown).not.toContain("Expand");
+    // Should not leak the toggle bar into markdown
+    expect(markdown).not.toContain("cb-code__caret");
   });
 
-  it("should preserve code blocks with expanded class", () => {
-    const html = `<div class="code-block-wrapper expanded" data-lines="10">
-      <pre><code class="language-javascript">const x = 5;</code></pre>
-      <button class="code-expand-btn" type="button">
-        <span class="icon"><svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='18 15 12 9 6 15'></polyline></svg></span>
-        <span class="text">Collapse</span>
-      </button>
+  it("should preserve expanded collapsible code blocks (.cb-code)", () => {
+    const html = `<div class="cb-code expanded" data-lines="10" data-preview-lines="2" data-collapse-kind="preview">
+      <pre class="cb-code__pre" style="--cb-preview-lines:2"><code class="language-javascript hljs">const x = 5;</code></pre>
+      <button class="cb-code__toggle" type="button" aria-label="Collapse code"><svg class="cb-code__caret"></svg></button>
     </div>`;
     const markdown = turndown.turndown(html);
-    // Should preserve the code block content
     expect(markdown).toContain("const x = 5;");
-    // Should not include the button text in the code
-    expect(markdown).not.toContain("Collapse");
+    expect(markdown).toContain("```javascript preview=2");
   });
 
   it("should preserve multi-line code blocks", () => {
@@ -73,18 +65,49 @@ const z = x + y;</code></pre>`;
   });
 
   it("should preserve preview=N parameter in code blocks", () => {
-    const html = `<div class="code-block-wrapper collapsed" data-lines="10" data-preview-lines="2" style="--preview-lines: 2">
-      <pre><code class="language-javascript">const x = 5;
+    const html = `<div class="cb-code collapsed" data-lines="3" data-preview-lines="2" data-collapse-kind="preview">
+      <pre class="cb-code__pre" style="--cb-preview-lines:2"><code class="language-javascript hljs">const x = 5;
 const y = 10;
 const z = 15;</code></pre>
-      <button class="code-expand-btn" type="button">
-        <span class="icon"><svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'></polyline></svg></span>
-        <span class="text">Expand</span>
-      </button>
+      <button class="cb-code__toggle" type="button" aria-label="Expand code"><svg class="cb-code__caret"></svg></button>
     </div>`;
     const markdown = turndown.turndown(html);
     expect(markdown).toContain("```javascript preview=2");
     expect(markdown).toContain("const x = 5;");
-    expect(markdown).not.toContain("Expand");
+  });
+
+  it("should preserve a size preset together with preview=N", () => {
+    const html = `<div class="cb-code collapsed cb-code--size-small" data-lines="6" data-preview-lines="3" data-collapse-kind="preview" data-size="small" style="--cb-preview-lines:3">
+      <div class="cb-code__header"><span class="cb-code__lang-icon"><svg></svg></span><span class="cb-code__lang">TypeScript</span></div>
+      <pre class="cb-code__pre"><code class="language-typescript hljs">const a = 1;</code></pre>
+      <button class="cb-code__toggle" type="button"><svg class="cb-code__caret"></svg></button>
+    </div>`;
+    const markdown = turndown.turndown(html);
+    expect(markdown).toContain("```typescript small preview=3");
+    expect(markdown).toContain("const a = 1;");
+    // Header label must not leak into the markdown output.
+    expect(markdown).not.toContain("TypeScript");
+  });
+
+  it("should preserve a width= size on a non-collapsible block", () => {
+    const html = `<div class="cb-code cb-code--size-pixels" data-lines="1" data-size="width=300" style="max-width:300px;">
+      <div class="cb-code__header"><span class="cb-code__lang">Python</span></div>
+      <pre class="cb-code__pre"><code class="language-python hljs">x = 1</code></pre>
+    </div>`;
+    const markdown = turndown.turndown(html);
+    expect(markdown).toContain("```python width=300");
+    expect(markdown).toContain("x = 1");
+  });
+
+  it("should preserve collapse=N parameter (alias of preview)", () => {
+    const html = `<div class="cb-code collapsed" data-lines="3" data-preview-lines="2" data-collapse-kind="collapse">
+      <pre class="cb-code__pre" style="--cb-preview-lines:2"><code class="language-python hljs">a = 1
+b = 2
+c = 3</code></pre>
+      <button class="cb-code__toggle" type="button" aria-label="Expand code"><svg class="cb-code__caret"></svg></button>
+    </div>`;
+    const markdown = turndown.turndown(html);
+    expect(markdown).toContain("```python collapse=2");
+    expect(markdown).toContain("a = 1");
   });
 });

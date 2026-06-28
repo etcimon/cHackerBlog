@@ -10,12 +10,46 @@
 
 [data-theme="hacker"] {
   @include tokens.emit(palettes.$hacker);
+
+  // Terminal vibe: tighter, glowing collapse bar with a slim mono feel.
+  .article-body {
+    --cb-code-bar: 1.85rem;
+    .cb-code,
+    .cb-code__pre {
+      border-radius: 0.375rem;
+    }
+    .cb-code__toggle {
+      letter-spacing: 0.04em;
+    }
+    .cb-code__toggle:hover {
+      color: rgb(var(--cb-accent));
+      background: rgb(var(--cb-accent) / 0.12);
+    }
+  }
 }
 
 [data-theme="medium"] {
   @include tokens.emit(palettes.$medium);
+
+  // Editorial: roomier bar and softer, paper-like rounded code surface.
+  .article-body {
+    --cb-code-bar: 2.25rem;
+    .cb-code,
+    .cb-code__pre {
+      border-radius: 0.75rem;
+    }
+  }
 }
 
 [data-theme="substack"] {
   @include tokens.emit(palettes.$substack);
+
+  // Inherits Medium's editorial code chrome with the warm Substack accent.
+  .article-body {
+    --cb-code-bar: 2.25rem;
+    .cb-code,
+    .cb-code__pre {
+      border-radius: 0.75rem;
+    }
+  }
 }

@@ -62,6 +62,122 @@ body {
   font-style: italic;
 }
 
+// --- Code blocks (syntax highlighted + collapsible) -------------------------
+// Token colours come from the highlight.js stylesheet selected via CODE_THEME
+// (loaded at runtime, targeting `.hljs*`). The structural chrome below reads
+// only --cb-* tokens so it sits consistently inside every site theme.
+//
+// Collapsible blocks (```lang preview=N / collapse=N) are wrapped in `.cb-code`
+// with a thick bottom toggle bar; the collapsed height is N lines expressed in
+// `em`, so it tracks the code font-size automatically.
+.article-body {
+  // Vertical padding inside the code <pre>; reused in the collapsed-height
+  // maths so exactly N lines stay visible (no off-by-one).
+  --cb-code-pad-y: 0.85rem;
+  // Height of the bottom toggle bar.
+  --cb-code-bar: 2rem;
+
+  // Wrapper owns the border/radius/background; header, code and the optional
+  // toggle bar stack vertically so the bar never overlaps the last code line.
+  .cb-code {
+    display: flex;
+    flex-direction: column;
+    margin: 1.25em 0;
+    border: 1px solid rgb(var(--cb-border));
+    border-radius: 0.625rem;
+    background: rgb(var(--cb-card));
+    overflow: hidden;
+  }
+
+  // Header: subtle language icon + name strip across the top.
+  .cb-code__header {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.75rem;
+    border-bottom: 1px solid rgb(var(--cb-border));
+    color: rgb(var(--cb-muted));
+    font-family: var(--cb-font-mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.03em;
+    user-select: none;
+  }
+  .cb-code__lang-icon {
+    display: inline-flex;
+    color: rgb(var(--cb-accent));
+  }
+  .cb-code__lang-icon svg {
+    width: 0.9rem;
+    height: 0.9rem;
+  }
+  .cb-code__lang {
+    line-height: 1;
+  }
+
+  .cb-code__pre {
+    margin: 0;
+    padding: var(--cb-code-pad-y) 1rem;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    overflow: auto;
+    font-family: var(--cb-font-mono);
+    line-height: 1.5;
+  }
+  .cb-code__pre code {
+    font-family: var(--cb-font-mono);
+    background: transparent;
+  }
+
+  // Collapsed: show exactly N preview lines (font-size aware via em) + the
+  // pre's own vertical padding, then scroll. The bar sits below, not over it.
+  .cb-code.collapsed .cb-code__pre {
+    max-height: calc(var(--cb-preview-lines, 6) * 1.5em + 2 * var(--cb-code-pad-y));
+    overflow: auto;
+  }
+  .cb-code.expanded .cb-code__pre {
+    max-height: none;
+  }
+
+  // Thick bottom bar, flush with the code block, with a subtle centred caret.
+  .cb-code__toggle {
+    flex: 0 0 auto;
+    height: var(--cb-code-bar);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-top: 1px solid rgb(var(--cb-border));
+    background: rgb(var(--cb-card));
+    color: rgb(var(--cb-muted));
+    cursor: pointer;
+    transition: color 0.15s ease, background 0.15s ease;
+  }
+  .cb-code__toggle:hover {
+    color: rgb(var(--cb-accent));
+    background: rgb(var(--cb-border) / 0.5);
+  }
+  // Caret points down when collapsed, rotates up (180deg) when expanded.
+  .cb-code__caret {
+    transition: transform 0.25s ease;
+  }
+  .cb-code.expanded .cb-code__caret {
+    transform: rotate(180deg);
+  }
+
+  // Optional width constraints (```lang small / width=N / 50%).
+  .cb-code--size-small {
+    max-width: 360px;
+  }
+  .cb-code--size-medium {
+    max-width: 640px;
+  }
+  .cb-code--size-large {
+    max-width: 900px;
+  }
+}
+
 // --- Attachment embeds (file / video / audio) -------------------------------
 // Shared by the WYSIWYG surface and the rendered article body. Built by
 // src/lib/embeds.ts; styled here purely from --cb-* tokens so all three themes

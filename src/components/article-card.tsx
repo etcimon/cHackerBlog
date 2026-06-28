@@ -14,7 +14,11 @@ import { useToast } from "@/components/toast";
 import { useAdmin } from "@/components/admin-context";
 import { CommentBar } from "@/components/comment-bar";
 import { useCommentsEnabled } from "@/lib/use-comments-enabled";
-import { ensureHighlightJsReady, highlightCodeInElement } from "@/lib/highlight";
+import {
+  ensureHighlightJsReady,
+  highlightCodeInElement,
+  wireCodeBlockToggles,
+} from "@/lib/highlight";
 
 interface Props {
   item: FeedItem;
@@ -35,36 +39,13 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
   const commentsEnabled = useCommentsEnabled();
   const articleBodyRef = useRef<HTMLDivElement>(null);
 
-  // Apply syntax highlighting when content is loaded and article is open
+  // Apply syntax highlighting + wire collapse toggles when content is shown.
   useEffect(() => {
     if (open && content !== undefined && articleBodyRef.current) {
       ensureHighlightJsReady(content).then(() => {
         if (articleBodyRef.current) {
           highlightCodeInElement(articleBodyRef.current);
-          // Add event listeners to code block expand buttons
-          const buttons = articleBodyRef.current.querySelectorAll(".code-expand-btn");
-          buttons.forEach((button) => {
-            button.addEventListener("click", (e) => {
-              const target = e.currentTarget as HTMLElement;
-              const wrapper = target.closest(".code-block-wrapper") as HTMLElement;
-              if (wrapper) {
-                wrapper.classList.toggle("collapsed");
-                wrapper.classList.toggle("expanded");
-                const icon = target.querySelector(".icon");
-                const text = target.querySelector(".text");
-                if (icon && text) {
-                  const isCollapsed = wrapper.classList.contains("collapsed");
-                  if (isCollapsed) {
-                    icon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>';
-                    text.textContent = "Expand";
-                  } else {
-                    icon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>';
-                    text.textContent = "Collapse";
-                  }
-                }
-              }
-            });
-          });
+          wireCodeBlockToggles(articleBodyRef.current);
         }
       });
     }

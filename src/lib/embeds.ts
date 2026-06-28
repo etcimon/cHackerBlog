@@ -617,7 +617,9 @@ export function addEmbedTurndownRule(turndown: {
     },
   });
 
-  // Add rule for code blocks to preserve language class and preview lines
+  // Add rule for code blocks to preserve the language and the preview/collapse
+  // line count. Handles both bare `<pre><code>` blocks and the `.cb-code`
+  // wrapper used for collapsible blocks, round-tripping back to fenced markdown.
   turndown.addRule("codeBlock", {
     filter: (node: HTMLElement) =>
       node.nodeType === 1 &&
@@ -625,40 +627,53 @@ export function addEmbedTurndownRule(turndown: {
       node.firstChild?.nodeName === "CODE",
     replacement: (_content: string, node: HTMLElement) => {
       const code = node.firstChild as HTMLElement;
-      const classList = code.className;
-      const langMatch = classList.match(/language-(\w+)/);
+      const langMatch = code.className.match(/language-([\w+#-]+)/);
       const lang = langMatch ? langMatch[1] : "";
 
       // Extract code content without extra whitespace
-      const codeContent = code.textContent || "";
+      const codeContent = (code.textContent || "").replace(/\n$/, "");
 
-      // Check if this is inside a code-block-wrapper with preview-lines
-      const wrapper = node.parentElement;
+      // `.cb-code` wrappers carry the optional size (data-size) and, when
+      // collapsible, the line count + keyword (preview/collapse). Reconstruct
+      // the info string as `lang [size] [preview|collapse=N]`.
+      const wrapper = node.closest(".cb-code") as HTMLElement | null;
+      const size = wrapper?.getAttribute("data-size");
       const previewLines = wrapper?.getAttribute("data-preview-lines");
+      const kind = wrapper?.getAttribute("data-collapse-kind") || "preview";
 
-      if (previewLines) {
-        return `\`\`\`${lang} preview=${previewLines}\n${codeContent}\n\`\`\``;
-      }
+      let info = lang;
+      if (size) info += ` ${size}`;
+      if (previewLines) info += ` ${kind}=${previewLines}`;
 
-      return `\`\`\`${lang}\n${codeContent}\n\`\`\``;
+      return `\n\n\`\`\`${info}\n${codeContent}\n\`\`\`\n\n`;
     },
   });
 
-  // Add rule to skip code block wrapper buttons
-  turndown.addRule("codeBlockButton", {
+  // Skip the language header so its label/icon never leak into markdown.
+  turndown.addRule("codeBlockHeader", {
     filter: (node: HTMLElement) =>
       node.nodeType === 1 &&
-      node.nodeName === "BUTTON" &&
-      node.classList.contains("code-expand-btn"),
+      node.nodeName === "DIV" &&
+      node.classList.contains("cb-code__header"),
     replacement: () => "",
   });
 
-  // Add rule to skip code block wrapper div
+  // Skip the collapse/expand toggle bar so it never leaks into markdown.
+  turndown.addRule("codeBlockToggle", {
+    filter: (node: HTMLElement) =>
+      node.nodeType === 1 &&
+      node.nodeName === "BUTTON" &&
+      node.classList.contains("cb-code__toggle"),
+    replacement: () => "",
+  });
+
+  // Unwrap the `.cb-code` container, leaving its inner <pre> to be handled by
+  // the codeBlock rule above.
   turndown.addRule("codeBlockWrapper", {
     filter: (node: HTMLElement) =>
       node.nodeType === 1 &&
       node.nodeName === "DIV" &&
-      node.classList.contains("code-block-wrapper"),
+      node.classList.contains("cb-code"),
     replacement: (content: string) => content,
   });
 }

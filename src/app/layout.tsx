@@ -10,7 +10,7 @@ import type { ReactNode } from "react";
 import Script from "next/script";
 import "@/styles/globals.scss";
 import { getSettings } from "@/lib/settings";
-import { activeTheme } from "@/lib/theme";
+import { activeTheme, resolvedCodeTheme } from "@/lib/theme";
 import { Providers } from "@/components/providers";
 import { Footer } from "@/components/footer";
 
@@ -27,7 +27,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   const settings = await getSettings();
 
   return (
-    <html lang="en" data-theme={activeTheme()}>
+    <html lang="en" data-theme={activeTheme()} data-code-theme={resolvedCodeTheme()}>
       <head>
         {/* Admin-provided custom <head> HTML (analytics, meta, fonts, etc.). */}
         {settings.headHtml ? (
