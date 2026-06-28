@@ -50,9 +50,7 @@ export function Feed({ initialPage, tags, prefetchPages, expandedCount, expandAl
         if (opts.cursor) params.set("cursor", opts.cursor);
         if (opts.tag) params.set("tag", opts.tag);
         if (isAdmin) params.set("includeUnpublished", "true");
-        console.log(`[Feed fetchPage] isAdmin=${isAdmin}, params=${params.toString()}`);
         const page = await api.get<FeedPage>(`/api/feed?${params.toString()}`);
-        console.log(`[Feed fetchPage] Received ${page.items.length} items`);
         setItems((prev) => (opts.reset ? page.items : [...prev, ...page.items]));
         setCursor(page.nextCursor);
         return page;

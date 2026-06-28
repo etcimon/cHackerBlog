@@ -6,7 +6,7 @@
  * entry and md→HTML on exit via `turndown` and `marked`. Image upload (admin
  * only) inserts <img> into the active surface.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bold,
   Italic,
@@ -42,6 +42,7 @@ import {
   loadHighlightJsLanguage,
   getHljsModule,
   wireCodeBlockToggles,
+  type CodeToggleOptions,
 } from "@/lib/highlight";
 
 interface Props {
@@ -261,6 +262,22 @@ export function Wysiwyg({ value, onChange }: Props) {
   const [hljsReady, setHljsReady] = useState(false);
   const [hljsInitialized, setHljsInitialized] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
+  // Remembers which code blocks the editor expanded, keyed by block index, so
+  // the state survives the markdown preview being re-injected via
+  // `dangerouslySetInnerHTML` on every keystroke / highlight pass (otherwise an
+  // expanded block would flicker back to collapsed as you type).
+  const expandedBlocksRef = useRef<Set<number>>(new Set());
+
+  const codeToggleOptions = useMemo<CodeToggleOptions>(
+    () => ({
+      isExpanded: (i) => expandedBlocksRef.current.has(i),
+      onToggle: (i, expanded) => {
+        if (expanded) expandedBlocksRef.current.add(i);
+        else expandedBlocksRef.current.delete(i);
+      },
+    }),
+    [],
+  );
 
   // Initialize rich content and keep it in sync with value prop. Re-wire the
   // code block collapse toggles after every sync so they work in rich mode too
@@ -270,15 +287,17 @@ export function Wysiwyg({ value, onChange }: Props) {
       ref.current.innerHTML = value;
     }
     if (mode === "rich" && ref.current) {
-      wireCodeBlockToggles(ref.current);
+      wireCodeBlockToggles(ref.current, codeToggleOptions);
     }
-  }, [value, mode]);
+  }, [value, mode, codeToggleOptions]);
 
-  // Clear markdown state when switching to rich mode
+  // Clear markdown state when switching to rich mode. Reset persisted block
+  // state too, since indices belong to the previously rendered content.
   useEffect(() => {
     if (mode === "rich") {
       setMd("");
     }
+    expandedBlocksRef.current.clear();
   }, [mode]);
 
   // When in markdown mode, convert markdown to HTML and emit to parent
@@ -320,12 +339,14 @@ export function Wysiwyg({ value, onChange }: Props) {
   }, [hljsReady, mode, md, onChange]);
 
   // Wire the code block collapse/expand toggle bars in the markdown preview.
-  // Re-runs whenever the rendered markdown changes or hljs becomes ready.
+  // Re-runs whenever the rendered markdown changes or hljs becomes ready. The
+  // delegated listener lives on the stable preview container, and the persisted
+  // options keep blocks expanded across the per-keystroke re-injection.
   useEffect(() => {
     if (mode === "md" && previewRef.current) {
-      wireCodeBlockToggles(previewRef.current);
+      wireCodeBlockToggles(previewRef.current, codeToggleOptions);
     }
-  }, [mode, md, hljsReady]);
+  }, [mode, md, hljsReady, codeToggleOptions]);
 
   // When toggling to md, convert current HTML → md.
   const toggleToMd = useCallback(() => {
@@ -356,10 +377,10 @@ export function Wysiwyg({ value, onChange }: Props) {
     requestAnimationFrame(() => {
       if (ref.current) {
         ref.current.innerHTML = html;
-        wireCodeBlockToggles(ref.current);
+        wireCodeBlockToggles(ref.current, codeToggleOptions);
       }
     });
-  }, [md, onChange]);
+  }, [md, onChange, codeToggleOptions]);
 
   const exec = useCallback(
     (command: string, arg?: string) => {

@@ -23,18 +23,24 @@ interface CodeArticleSpec {
   label: string;
   /** CSS class + inline style + markdown-style spec mirroring buildCodeBlock. */
   size?: { cls: string; style: string; spec: string };
+  /**
+   * Simulate an article previously saved through the WYSIWYG, whose serialized
+   * HTML leaked the `data-wired="1"` flag onto the toggle button. This used to
+   * make the feed skip wiring the click listener (regression guard).
+   */
+  prevEdited?: boolean;
 }
 
 // 10 distinct languages with a spread of size settings (preset / pixels /
 // percent / none) to exercise the full code-block matrix.
 const SPECS: CodeArticleSpec[] = [
-  { lang: "javascript", label: "JavaScript" },
+  { lang: "javascript", label: "JavaScript", prevEdited: true },
   { lang: "typescript", label: "TypeScript", size: { cls: "cb-code--size-small", style: "", spec: "small" } },
-  { lang: "python", label: "Python", size: { cls: "cb-code--size-medium", style: "", spec: "medium" } },
+  { lang: "python", label: "Python", size: { cls: "cb-code--size-medium", style: "", spec: "medium" }, prevEdited: true },
   { lang: "go", label: "Go", size: { cls: "cb-code--size-large", style: "", spec: "large" } },
   { lang: "rust", label: "Rust", size: { cls: "cb-code--size-pixels", style: "max-width:300px;", spec: "width=300" } },
   { lang: "java", label: "Java", size: { cls: "cb-code--size-percent", style: "width:80%;", spec: "80%" } },
-  { lang: "cpp", label: "C++" },
+  { lang: "cpp", label: "C++", prevEdited: true },
   { lang: "ruby", label: "Ruby", size: { cls: "cb-code--size-small", style: "", spec: "small" } },
   { lang: "bash", label: "Bash", size: { cls: "cb-code--size-medium", style: "", spec: "medium" } },
   { lang: "sql", label: "SQL", size: { cls: "cb-code--size-pixels", style: "max-width:480px;", spec: "width=480" } },
@@ -65,8 +71,11 @@ function buildCodeBlockHtml(spec: CodeArticleSpec): string {
     `<span class="cb-code__lang">${spec.label}</span>` +
     `</div>`;
   const pre = `<pre class="cb-code__pre"><code class="language-${spec.lang}">${body}</code></pre>`;
+  // Articles previously saved through the WYSIWYG leak `data-wired="1"` into the
+  // stored HTML; the feed must still wire (and thus make clickable) such toggles.
+  const wiredAttr = spec.prevEdited ? ` data-wired="1"` : "";
   const toggle = collapsible
-    ? `<button class="cb-code__toggle" type="button" contenteditable="false" ` +
+    ? `<button class="cb-code__toggle" type="button" contenteditable="false"${wiredAttr} ` +
       `aria-label="Expand code" aria-expanded="false"><svg class="cb-code__caret"></svg></button>`
     : "";
 
@@ -88,8 +97,7 @@ async function seedCodeArticles(): Promise<void> {
   const adapter = new PrismaLibSql({ url: "file:./test.sqlite" });
   const client = new PrismaClient({ adapter });
   try {
-    // Take full control of the feed contents.
-    await client.comment.deleteMany();
+    // Clear default articles and replace with code articles
     await client.article.deleteMany();
 
     await client.siteSettings.upsert({
@@ -130,19 +138,6 @@ async function countCards(page: any): Promise<number> {
   return page.evaluate(
     () => document.querySelectorAll('[data-testid="article-card"]').length,
   );
-}
-
-/** Scroll until at least `target` article cards are present (infinite scroll). */
-async function loadAllCards(page: any, target: number): Promise<void> {
-  for (let attempt = 0; attempt < 25; attempt++) {
-    if ((await countCards(page)) >= target) return;
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await new Promise((r) => setTimeout(r, 600));
-  }
-  const got = await countCards(page);
-  if (got < target) {
-    throw new Error(`infinite scroll only produced ${got}/${target} cards`);
-  }
 }
 
 /** Ensure the nth card's body is rendered (clicks "Full text" if needed). */
@@ -209,7 +204,7 @@ describe("Feed code-block collapse/expand", () => {
 
   beforeAll(async () => {
     context = await setup();
-    // Replace the default seed with our 10 code-block articles.
+    // Replace default articles with code articles
     await seedCodeArticles();
 
     context.page.on("pageerror", (err) => pageErrors.push(String(err)));
@@ -222,11 +217,17 @@ describe("Feed code-block collapse/expand", () => {
     await teardown(context);
   }, 10_000);
 
-  it("loads 10 code articles via infinite scroll and toggles each block", async () => {
+  it("loads 10 code articles and toggles each block", async () => {
     const { page, baseUrl } = context;
+
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle0", timeout: 20_000 });
 
-    await loadAllCards(page, SPECS.length);
+    // All 10 code articles load on the first page (FEED_PAGE_SIZE=20 in .env.test).
+    await page.waitForFunction(
+      (n: number) => document.querySelectorAll('[data-testid="article-card"]').length >= n,
+      { timeout: 15_000 },
+      SPECS.length,
+    );
     expect(await countCards(page)).toBeGreaterThanOrEqual(SPECS.length);
 
     for (let i = 0; i < SPECS.length; i++) {
@@ -277,7 +278,13 @@ describe("Feed code-block collapse/expand", () => {
 
     await loginAsAdmin(context);
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle0", timeout: 20_000 });
-    await loadAllCards(page, 1);
+
+    // All 10 code articles load on the first page (FEED_PAGE_SIZE=20 in .env.test).
+    await page.waitForFunction(
+      (n: number) => document.querySelectorAll('[data-testid="article-card"]').length >= n,
+      { timeout: 15_000 },
+      SPECS.length,
+    );
     await ensureNthOpen(page, 0);
 
     // Expand the first article's code block before editing.

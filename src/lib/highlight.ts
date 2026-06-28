@@ -197,43 +197,78 @@ function applyToggleState(wrap: Element, btn: Element, expanded: boolean): void 
   btn.setAttribute("aria-expanded", expanded ? "true" : "false");
 }
 
+// Latest toggle options per container. Keyed by the (stable, React-owned)
+// `.article-body` element so the single delegated listener below always reads
+// fresh callbacks, even after the options object identity changes on re-render.
+const containerOptions = new WeakMap<HTMLElement, CodeToggleOptions>();
+
 /**
- * Wire the collapse/expand toggle bars for code blocks within an element.
+ * Single delegated click handler shared by every wired container.
  *
- * Idempotent per-button (guarded via a data flag) so it is safe to call after
- * every render. Toggling swaps the `.collapsed`/`.expanded` classes on the
- * `.cb-code` wrapper; all visual changes (height, caret rotation, scroll) are
- * driven from CSS.
+ * Using delegation (one listener on the stable container) instead of per-button
+ * listeners is the crux of the fix: the article body is re-injected via
+ * `dangerouslySetInnerHTML` and its code is re-written in place by
+ * `highlightCodeInElement`, both of which replace inner nodes. A listener bound
+ * to a specific button would be lost (or stranded on a detached node) whenever
+ * that happens — the bug seen on feed/scroll-loaded and freshly edited cards.
+ * The container node, by contrast, survives all inner mutations, so one
+ * listener keeps working for the component's whole lifetime.
+ */
+function handleContainerClick(this: HTMLElement, ev: Event): void {
+  const target = ev.target as HTMLElement | null;
+  const btn = target?.closest<HTMLElement>(".cb-code__toggle");
+  if (!btn || !this.contains(btn)) return;
+  const wrap = btn.closest<HTMLElement>(".cb-code");
+  if (!wrap) return;
+
+  // Recompute the block index at click time so it stays correct regardless of
+  // how the body was last re-injected/re-highlighted.
+  const wraps = Array.from(this.querySelectorAll<HTMLElement>(".cb-code"));
+  const index = wraps.indexOf(wrap);
+
+  const expanded = !wrap.classList.contains("expanded");
+  applyToggleState(wrap, btn, expanded);
+  containerOptions.get(this)?.onToggle?.(index, expanded);
+}
+
+/**
+ * Wire the collapse/expand toggle bars for code blocks within a container.
  *
- * When `options.isExpanded` is supplied, the persisted state is re-applied on
- * every call. This is what keeps a block expanded across React re-renders that
- * re-inject the article body via `dangerouslySetInnerHTML` (otherwise the block
- * would visibly flicker back to collapsed after an edit/refresh).
+ * Safe and cheap to call after every render, after highlighting, and after the
+ * body HTML is re-injected — it (1) refreshes the stored options, (2) restores
+ * each block's persisted expanded/collapsed state, and (3) ensures exactly one
+ * delegated click listener is attached to the container. Adding the same
+ * function reference again is a DOM no-op, so wiring is fully idempotent without
+ * any per-node bookkeeping.
+ *
+ * When `options.isExpanded` is supplied, persisted state is re-applied on every
+ * call so a block stays expanded across re-renders that re-inject the body
+ * (otherwise it would visibly flicker back to collapsed after an edit/refresh).
  */
 export function wireCodeBlockToggles(
   element: HTMLElement,
   options: CodeToggleOptions = {},
 ): void {
+  // Always store the latest callbacks for the delegated handler to read.
+  containerOptions.set(element, options);
+
   // Index across all `.cb-code` wrappers (collapsible or not) so the index is a
   // stable key for the persisted-state callbacks regardless of block count.
   const wraps = element.querySelectorAll<HTMLElement>(".cb-code");
   wraps.forEach((wrap, index) => {
     const btn = wrap.querySelector<HTMLElement>(".cb-code__toggle");
-    if (!btn) return; // non-collapsible block: nothing to wire
+    if (!btn) return; // non-collapsible block: nothing to restore
+
+    // Strip any stale flag that leaked into stored HTML from older saves so it
+    // never confuses other logic or re-serializes.
+    if (btn.dataset.wired) delete btn.dataset.wired;
 
     // Restore persisted state on every (re)wire so it survives re-injection.
-    if (options.isExpanded) {
-      applyToggleState(wrap, btn, options.isExpanded(index));
-    }
-
-    if (btn.dataset.wired === "1") return;
-    btn.dataset.wired = "1";
-    btn.addEventListener("click", () => {
-      const expanded = !wrap.classList.contains("expanded");
-      applyToggleState(wrap, btn, expanded);
-      options.onToggle?.(index, expanded);
-    });
+    if (options.isExpanded) applyToggleState(wrap, btn, options.isExpanded(index));
   });
+
+  // Idempotent: re-adding the identical handler reference is ignored by the DOM.
+  element.addEventListener("click", handleContainerClick);
 }
 
 export function getHljsModule() {
