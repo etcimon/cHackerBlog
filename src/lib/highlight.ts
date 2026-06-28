@@ -12,7 +12,6 @@
  * resolvedCodeTheme()), e.g. "github-dark", "monokai", "nord".
  */
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let hljsModule: any = null;
 let hljsInitialized = false;
 let loadedCssTheme: string | null = null;

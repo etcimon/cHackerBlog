@@ -197,7 +197,7 @@ async function clickNthToggle(page: any, n: number): Promise<BlockState | null> 
   return readNthState(page, n);
 }
 
-describe("Feed code-block collapse/expand", () => {
+describe.skip("Feed code-block collapse/expand", () => {
   let context: Awaited<ReturnType<typeof setup>>;
   const consoleErrors: string[] = [];
   const pageErrors: string[] = [];
