@@ -17,6 +17,7 @@ const eslintConfig = [
   {
     rules: {
       "@next/next/no-duplicate-head": "off",
+      "@next/next/no-page-custom-font": "off",
       "react-hooks/exhaustive-deps": "off"
     }
   }
