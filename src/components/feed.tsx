@@ -24,13 +24,28 @@ interface Props {
   expandedCount: number;
   /** Whether to expand ALL articles in the feed (FEED_EXPAND_ALL). */
   expandAll: boolean;
+  /** First-load: tag the feed is scoped to (from the article locator). */
+  initialTag?: string | null;
+  /** First-load: slug to scroll to once rendered (from /article/[slug]). */
+  initialTargetSlug?: string | null;
+  /** Whether to use hash-based scrolling for article navigation. */
+  useHashScroll?: boolean;
 }
 
-export function Feed({ initialPage, tags, prefetchPages, expandedCount, expandAll }: Props) {
+export function Feed({
+  initialPage,
+  tags,
+  prefetchPages,
+  expandedCount,
+  expandAll,
+  initialTag = null,
+  initialTargetSlug = null,
+  useHashScroll = false,
+}: Props) {
   const { isAdmin, ready } = useAdmin();
   const [items, setItems] = useState<FeedItem[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
-  const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [activeTag, setActiveTag] = useState<string | null>(initialTag);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<FeedItem | null>(null);
   const [creating, setCreating] = useState(false);
@@ -39,6 +54,7 @@ export function Feed({ initialPage, tags, prefetchPages, expandedCount, expandAl
 
   const sentinelRef = useRef<HTMLDivElement>(null);
   const loadingRef = useRef(false);
+  const scrolledRef = useRef(false);
 
   const fetchPage = useCallback(
     async (opts: { cursor?: string | null; tag?: string | null; reset?: boolean }) => {
@@ -73,31 +89,74 @@ export function Feed({ initialPage, tags, prefetchPages, expandedCount, expandAl
     [fetchPage],
   );
 
-  // Reload feed when admin status changes to include/exclude unpublished
+  // Reload feed when admin status changes to include/exclude unpublished.
+  // Skipped on the article route (initialTargetSlug present): the server already
+  // located an admin-aware slice and refetching the global feed would drop the
+  // scroll target.
   useEffect(() => {
+    if (initialTargetSlug) return;
     // Only reload if we have items (initial page loaded) and admin status changed
     if (items.length > 0) {
       setItems([]);
       setCursor(null);
       void fetchPage({ reset: true });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Intentionally runs only on admin-status change, not on every items update.
   }, [isAdmin, fetchPage]);
 
-  // Initial load: use server-provided data if not admin, otherwise fetch with admin status
+  // Initial load: use server-provided data if not admin, otherwise fetch with
+  // admin status. On the article route we ALWAYS adopt the server slice (it is
+  // already admin-aware) so the located target stays present to scroll to.
   useEffect(() => {
     if (!initialLoaded && ready) {
-      if (isAdmin) {
+      if (isAdmin && !initialTargetSlug) {
         // Admin: fetch fresh data including unpublished
         void fetchPage({ reset: true });
       } else {
-        // Non-admin: use server-provided data
+        // Non-admin (or article route): use server-provided data
         setItems(initialPage.items);
         setCursor(initialPage.nextCursor);
       }
       setInitialLoaded(true);
     }
-  }, [isAdmin, initialLoaded, ready, fetchPage, initialPage]);
+  }, [isAdmin, initialLoaded, ready, fetchPage, initialPage, initialTargetSlug]);
+
+  // First-load scroll: when useHashScroll is true, append the hash to the URL
+  // and manually scroll to the top anchor after DOM is fully rendered.
+  useEffect(() => {
+    if (!initialTargetSlug || scrolledRef.current) return;
+    if (!items.some((i) => i.slug === initialTargetSlug)) return;
+
+    const scrollToTop = () => {
+      const el = document.getElementById(`${initialTargetSlug}-top`);
+      if (!el) return;
+      scrolledRef.current = true;
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+
+    if (useHashScroll) {
+      // Append hash to URL for reference, then manually scroll after DOM is ready
+      const currentUrl = new URL(window.location.href);
+      currentUrl.hash = `${initialTargetSlug}-top`;
+      window.history.replaceState({}, "", currentUrl.toString());
+
+      // Wait for DOM to be fully rendered before scrolling
+      const timeout = setTimeout(scrollToTop, 300);
+      return () => clearTimeout(timeout);
+    } else {
+      // Manual scroll to header element with immediate attempt and fallback
+      const el = document.getElementById(`${initialTargetSlug}-header`);
+      if (el) {
+        scrolledRef.current = true;
+        requestAnimationFrame(() =>
+          el.scrollIntoView({ behavior: "smooth", block: "start" }),
+        );
+      } else {
+        const timeout = setTimeout(scrollToTop, 300);
+        return () => clearTimeout(timeout);
+      }
+    }
+  }, [items, initialTargetSlug, useHashScroll]);
 
   // Infinite scroll via IntersectionObserver, with eager multi-page prefetch.
   useEffect(() => {
@@ -153,7 +212,11 @@ export function Feed({ initialPage, tags, prefetchPages, expandedCount, expandAl
           <ArticleCard
             key={item.id}
             item={item}
-            expanded={expandAll || (idx < expandedCount && activeTag === null)}
+            expanded={
+              expandAll ||
+              item.slug === initialTargetSlug ||
+              (idx < expandedCount && activeTag === null)
+            }
             onEdit={setEditing}
           />
         ))}

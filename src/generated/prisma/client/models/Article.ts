@@ -32,6 +32,9 @@ export type ArticleMinAggregateOutputType = {
   title: string | null
   content: string | null
   coverUrl: string | null
+  seoKeywords: string | null
+  seoDescription: string | null
+  thumbnailUrl: string | null
   published: boolean | null
   publishedAt: Date | null
   createdAt: Date | null
@@ -47,6 +50,9 @@ export type ArticleMaxAggregateOutputType = {
   title: string | null
   content: string | null
   coverUrl: string | null
+  seoKeywords: string | null
+  seoDescription: string | null
+  thumbnailUrl: string | null
   published: boolean | null
   publishedAt: Date | null
   createdAt: Date | null
@@ -62,6 +68,9 @@ export type ArticleCountAggregateOutputType = {
   title: number
   content: number
   coverUrl: number
+  seoKeywords: number
+  seoDescription: number
+  thumbnailUrl: number
   published: number
   publishedAt: number
   createdAt: number
@@ -79,6 +88,9 @@ export type ArticleMinAggregateInputType = {
   title?: true
   content?: true
   coverUrl?: true
+  seoKeywords?: true
+  seoDescription?: true
+  thumbnailUrl?: true
   published?: true
   publishedAt?: true
   createdAt?: true
@@ -94,6 +106,9 @@ export type ArticleMaxAggregateInputType = {
   title?: true
   content?: true
   coverUrl?: true
+  seoKeywords?: true
+  seoDescription?: true
+  thumbnailUrl?: true
   published?: true
   publishedAt?: true
   createdAt?: true
@@ -109,6 +124,9 @@ export type ArticleCountAggregateInputType = {
   title?: true
   content?: true
   coverUrl?: true
+  seoKeywords?: true
+  seoDescription?: true
+  thumbnailUrl?: true
   published?: true
   publishedAt?: true
   createdAt?: true
@@ -197,6 +215,9 @@ export type ArticleGroupByOutputType = {
   title: string
   content: string
   coverUrl: string | null
+  seoKeywords: string
+  seoDescription: string
+  thumbnailUrl: string | null
   published: boolean
   publishedAt: Date
   createdAt: Date
@@ -233,6 +254,9 @@ export type ArticleWhereInput = {
   title?: Prisma.StringFilter<"Article"> | string
   content?: Prisma.StringFilter<"Article"> | string
   coverUrl?: Prisma.StringNullableFilter<"Article"> | string | null
+  seoKeywords?: Prisma.StringFilter<"Article"> | string
+  seoDescription?: Prisma.StringFilter<"Article"> | string
+  thumbnailUrl?: Prisma.StringNullableFilter<"Article"> | string | null
   published?: Prisma.BoolFilter<"Article"> | boolean
   publishedAt?: Prisma.DateTimeFilter<"Article"> | Date | string
   createdAt?: Prisma.DateTimeFilter<"Article"> | Date | string
@@ -250,6 +274,9 @@ export type ArticleOrderByWithRelationInput = {
   title?: Prisma.SortOrder
   content?: Prisma.SortOrder
   coverUrl?: Prisma.SortOrderInput | Prisma.SortOrder
+  seoKeywords?: Prisma.SortOrder
+  seoDescription?: Prisma.SortOrder
+  thumbnailUrl?: Prisma.SortOrderInput | Prisma.SortOrder
   published?: Prisma.SortOrder
   publishedAt?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
@@ -270,6 +297,9 @@ export type ArticleWhereUniqueInput = Prisma.AtLeast<{
   title?: Prisma.StringFilter<"Article"> | string
   content?: Prisma.StringFilter<"Article"> | string
   coverUrl?: Prisma.StringNullableFilter<"Article"> | string | null
+  seoKeywords?: Prisma.StringFilter<"Article"> | string
+  seoDescription?: Prisma.StringFilter<"Article"> | string
+  thumbnailUrl?: Prisma.StringNullableFilter<"Article"> | string | null
   published?: Prisma.BoolFilter<"Article"> | boolean
   publishedAt?: Prisma.DateTimeFilter<"Article"> | Date | string
   createdAt?: Prisma.DateTimeFilter<"Article"> | Date | string
@@ -287,6 +317,9 @@ export type ArticleOrderByWithAggregationInput = {
   title?: Prisma.SortOrder
   content?: Prisma.SortOrder
   coverUrl?: Prisma.SortOrderInput | Prisma.SortOrder
+  seoKeywords?: Prisma.SortOrder
+  seoDescription?: Prisma.SortOrder
+  thumbnailUrl?: Prisma.SortOrderInput | Prisma.SortOrder
   published?: Prisma.SortOrder
   publishedAt?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
@@ -308,6 +341,9 @@ export type ArticleScalarWhereWithAggregatesInput = {
   title?: Prisma.StringWithAggregatesFilter<"Article"> | string
   content?: Prisma.StringWithAggregatesFilter<"Article"> | string
   coverUrl?: Prisma.StringNullableWithAggregatesFilter<"Article"> | string | null
+  seoKeywords?: Prisma.StringWithAggregatesFilter<"Article"> | string
+  seoDescription?: Prisma.StringWithAggregatesFilter<"Article"> | string
+  thumbnailUrl?: Prisma.StringNullableWithAggregatesFilter<"Article"> | string | null
   published?: Prisma.BoolWithAggregatesFilter<"Article"> | boolean
   publishedAt?: Prisma.DateTimeWithAggregatesFilter<"Article"> | Date | string
   createdAt?: Prisma.DateTimeWithAggregatesFilter<"Article"> | Date | string
@@ -323,6 +359,9 @@ export type ArticleCreateInput = {
   title: string
   content?: string
   coverUrl?: string | null
+  seoKeywords?: string
+  seoDescription?: string
+  thumbnailUrl?: string | null
   published?: boolean
   publishedAt?: Date | string
   createdAt?: Date | string
@@ -340,6 +379,9 @@ export type ArticleUncheckedCreateInput = {
   title: string
   content?: string
   coverUrl?: string | null
+  seoKeywords?: string
+  seoDescription?: string
+  thumbnailUrl?: string | null
   published?: boolean
   publishedAt?: Date | string
   createdAt?: Date | string
@@ -357,6 +399,9 @@ export type ArticleUpdateInput = {
   title?: Prisma.StringFieldUpdateOperationsInput | string
   content?: Prisma.StringFieldUpdateOperationsInput | string
   coverUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  seoKeywords?: Prisma.StringFieldUpdateOperationsInput | string
+  seoDescription?: Prisma.StringFieldUpdateOperationsInput | string
+  thumbnailUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   published?: Prisma.BoolFieldUpdateOperationsInput | boolean
   publishedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -374,6 +419,9 @@ export type ArticleUncheckedUpdateInput = {
   title?: Prisma.StringFieldUpdateOperationsInput | string
   content?: Prisma.StringFieldUpdateOperationsInput | string
   coverUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  seoKeywords?: Prisma.StringFieldUpdateOperationsInput | string
+  seoDescription?: Prisma.StringFieldUpdateOperationsInput | string
+  thumbnailUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   published?: Prisma.BoolFieldUpdateOperationsInput | boolean
   publishedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -391,6 +439,9 @@ export type ArticleCreateManyInput = {
   title: string
   content?: string
   coverUrl?: string | null
+  seoKeywords?: string
+  seoDescription?: string
+  thumbnailUrl?: string | null
   published?: boolean
   publishedAt?: Date | string
   createdAt?: Date | string
@@ -406,6 +457,9 @@ export type ArticleUpdateManyMutationInput = {
   title?: Prisma.StringFieldUpdateOperationsInput | string
   content?: Prisma.StringFieldUpdateOperationsInput | string
   coverUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  seoKeywords?: Prisma.StringFieldUpdateOperationsInput | string
+  seoDescription?: Prisma.StringFieldUpdateOperationsInput | string
+  thumbnailUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   published?: Prisma.BoolFieldUpdateOperationsInput | boolean
   publishedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -421,6 +475,9 @@ export type ArticleUncheckedUpdateManyInput = {
   title?: Prisma.StringFieldUpdateOperationsInput | string
   content?: Prisma.StringFieldUpdateOperationsInput | string
   coverUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  seoKeywords?: Prisma.StringFieldUpdateOperationsInput | string
+  seoDescription?: Prisma.StringFieldUpdateOperationsInput | string
+  thumbnailUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   published?: Prisma.BoolFieldUpdateOperationsInput | boolean
   publishedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -436,6 +493,9 @@ export type ArticleCountOrderByAggregateInput = {
   title?: Prisma.SortOrder
   content?: Prisma.SortOrder
   coverUrl?: Prisma.SortOrder
+  seoKeywords?: Prisma.SortOrder
+  seoDescription?: Prisma.SortOrder
+  thumbnailUrl?: Prisma.SortOrder
   published?: Prisma.SortOrder
   publishedAt?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
@@ -451,6 +511,9 @@ export type ArticleMaxOrderByAggregateInput = {
   title?: Prisma.SortOrder
   content?: Prisma.SortOrder
   coverUrl?: Prisma.SortOrder
+  seoKeywords?: Prisma.SortOrder
+  seoDescription?: Prisma.SortOrder
+  thumbnailUrl?: Prisma.SortOrder
   published?: Prisma.SortOrder
   publishedAt?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
@@ -466,6 +529,9 @@ export type ArticleMinOrderByAggregateInput = {
   title?: Prisma.SortOrder
   content?: Prisma.SortOrder
   coverUrl?: Prisma.SortOrder
+  seoKeywords?: Prisma.SortOrder
+  seoDescription?: Prisma.SortOrder
+  thumbnailUrl?: Prisma.SortOrder
   published?: Prisma.SortOrder
   publishedAt?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
@@ -552,6 +618,9 @@ export type ArticleCreateWithoutTagsInput = {
   title: string
   content?: string
   coverUrl?: string | null
+  seoKeywords?: string
+  seoDescription?: string
+  thumbnailUrl?: string | null
   published?: boolean
   publishedAt?: Date | string
   createdAt?: Date | string
@@ -568,6 +637,9 @@ export type ArticleUncheckedCreateWithoutTagsInput = {
   title: string
   content?: string
   coverUrl?: string | null
+  seoKeywords?: string
+  seoDescription?: string
+  thumbnailUrl?: string | null
   published?: boolean
   publishedAt?: Date | string
   createdAt?: Date | string
@@ -608,6 +680,9 @@ export type ArticleScalarWhereInput = {
   title?: Prisma.StringFilter<"Article"> | string
   content?: Prisma.StringFilter<"Article"> | string
   coverUrl?: Prisma.StringNullableFilter<"Article"> | string | null
+  seoKeywords?: Prisma.StringFilter<"Article"> | string
+  seoDescription?: Prisma.StringFilter<"Article"> | string
+  thumbnailUrl?: Prisma.StringNullableFilter<"Article"> | string | null
   published?: Prisma.BoolFilter<"Article"> | boolean
   publishedAt?: Prisma.DateTimeFilter<"Article"> | Date | string
   createdAt?: Prisma.DateTimeFilter<"Article"> | Date | string
@@ -623,6 +698,9 @@ export type ArticleCreateWithoutCommentsInput = {
   title: string
   content?: string
   coverUrl?: string | null
+  seoKeywords?: string
+  seoDescription?: string
+  thumbnailUrl?: string | null
   published?: boolean
   publishedAt?: Date | string
   createdAt?: Date | string
@@ -639,6 +717,9 @@ export type ArticleUncheckedCreateWithoutCommentsInput = {
   title: string
   content?: string
   coverUrl?: string | null
+  seoKeywords?: string
+  seoDescription?: string
+  thumbnailUrl?: string | null
   published?: boolean
   publishedAt?: Date | string
   createdAt?: Date | string
@@ -671,6 +752,9 @@ export type ArticleUpdateWithoutCommentsInput = {
   title?: Prisma.StringFieldUpdateOperationsInput | string
   content?: Prisma.StringFieldUpdateOperationsInput | string
   coverUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  seoKeywords?: Prisma.StringFieldUpdateOperationsInput | string
+  seoDescription?: Prisma.StringFieldUpdateOperationsInput | string
+  thumbnailUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   published?: Prisma.BoolFieldUpdateOperationsInput | boolean
   publishedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -687,6 +771,9 @@ export type ArticleUncheckedUpdateWithoutCommentsInput = {
   title?: Prisma.StringFieldUpdateOperationsInput | string
   content?: Prisma.StringFieldUpdateOperationsInput | string
   coverUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  seoKeywords?: Prisma.StringFieldUpdateOperationsInput | string
+  seoDescription?: Prisma.StringFieldUpdateOperationsInput | string
+  thumbnailUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   published?: Prisma.BoolFieldUpdateOperationsInput | boolean
   publishedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -703,6 +790,9 @@ export type ArticleUpdateWithoutTagsInput = {
   title?: Prisma.StringFieldUpdateOperationsInput | string
   content?: Prisma.StringFieldUpdateOperationsInput | string
   coverUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  seoKeywords?: Prisma.StringFieldUpdateOperationsInput | string
+  seoDescription?: Prisma.StringFieldUpdateOperationsInput | string
+  thumbnailUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   published?: Prisma.BoolFieldUpdateOperationsInput | boolean
   publishedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -719,6 +809,9 @@ export type ArticleUncheckedUpdateWithoutTagsInput = {
   title?: Prisma.StringFieldUpdateOperationsInput | string
   content?: Prisma.StringFieldUpdateOperationsInput | string
   coverUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  seoKeywords?: Prisma.StringFieldUpdateOperationsInput | string
+  seoDescription?: Prisma.StringFieldUpdateOperationsInput | string
+  thumbnailUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   published?: Prisma.BoolFieldUpdateOperationsInput | boolean
   publishedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -735,6 +828,9 @@ export type ArticleUncheckedUpdateManyWithoutTagsInput = {
   title?: Prisma.StringFieldUpdateOperationsInput | string
   content?: Prisma.StringFieldUpdateOperationsInput | string
   coverUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  seoKeywords?: Prisma.StringFieldUpdateOperationsInput | string
+  seoDescription?: Prisma.StringFieldUpdateOperationsInput | string
+  thumbnailUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   published?: Prisma.BoolFieldUpdateOperationsInput | boolean
   publishedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -790,6 +886,9 @@ export type ArticleSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs 
   title?: boolean
   content?: boolean
   coverUrl?: boolean
+  seoKeywords?: boolean
+  seoDescription?: boolean
+  thumbnailUrl?: boolean
   published?: boolean
   publishedAt?: boolean
   createdAt?: boolean
@@ -808,6 +907,9 @@ export type ArticleSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Exten
   title?: boolean
   content?: boolean
   coverUrl?: boolean
+  seoKeywords?: boolean
+  seoDescription?: boolean
+  thumbnailUrl?: boolean
   published?: boolean
   publishedAt?: boolean
   createdAt?: boolean
@@ -823,6 +925,9 @@ export type ArticleSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Exten
   title?: boolean
   content?: boolean
   coverUrl?: boolean
+  seoKeywords?: boolean
+  seoDescription?: boolean
+  thumbnailUrl?: boolean
   published?: boolean
   publishedAt?: boolean
   createdAt?: boolean
@@ -838,6 +943,9 @@ export type ArticleSelectScalar = {
   title?: boolean
   content?: boolean
   coverUrl?: boolean
+  seoKeywords?: boolean
+  seoDescription?: boolean
+  thumbnailUrl?: boolean
   published?: boolean
   publishedAt?: boolean
   createdAt?: boolean
@@ -846,7 +954,7 @@ export type ArticleSelectScalar = {
   pinnedAt?: boolean
 }
 
-export type ArticleOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "slug" | "locale" | "title" | "content" | "coverUrl" | "published" | "publishedAt" | "createdAt" | "updatedAt" | "pinned" | "pinnedAt", ExtArgs["result"]["article"]>
+export type ArticleOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "slug" | "locale" | "title" | "content" | "coverUrl" | "seoKeywords" | "seoDescription" | "thumbnailUrl" | "published" | "publishedAt" | "createdAt" | "updatedAt" | "pinned" | "pinnedAt", ExtArgs["result"]["article"]>
 export type ArticleInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   tags?: boolean | Prisma.Article$tagsArgs<ExtArgs>
   comments?: boolean | Prisma.Article$commentsArgs<ExtArgs>
@@ -868,6 +976,9 @@ export type $ArticlePayload<ExtArgs extends runtime.Types.Extensions.InternalArg
     title: string
     content: string
     coverUrl: string | null
+    seoKeywords: string
+    seoDescription: string
+    thumbnailUrl: string | null
     published: boolean
     publishedAt: Date
     createdAt: Date
@@ -1305,6 +1416,9 @@ export interface ArticleFieldRefs {
   readonly title: Prisma.FieldRef<"Article", 'String'>
   readonly content: Prisma.FieldRef<"Article", 'String'>
   readonly coverUrl: Prisma.FieldRef<"Article", 'String'>
+  readonly seoKeywords: Prisma.FieldRef<"Article", 'String'>
+  readonly seoDescription: Prisma.FieldRef<"Article", 'String'>
+  readonly thumbnailUrl: Prisma.FieldRef<"Article", 'String'>
   readonly published: Prisma.FieldRef<"Article", 'Boolean'>
   readonly publishedAt: Prisma.FieldRef<"Article", 'DateTime'>
   readonly createdAt: Prisma.FieldRef<"Article", 'DateTime'>

@@ -26,7 +26,7 @@ export async function autopostArticle(
   const enabled = env.SOCIAL_AUTOPOST_ENABLED && settingsAllow;
   if (!enabled) return { x: null, linkedin: null };
 
-  const url = `${env.APP_URL}/#${input.slug}`;
+  const url = `${env.APP_URL.replace(/\/$/, "")}/article/${input.slug}`;
   const text = `${input.title}\n\n${input.preview}`.slice(0, 270);
 
   const [x, linkedin] = await Promise.all([

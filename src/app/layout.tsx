@@ -29,6 +29,15 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   return (
     <html lang="en" data-theme={activeTheme()} data-code-theme={resolvedCodeTheme()}>
       <head>
+        {/* Favicon / App Icons */}
+        <link rel="icon" href="/favicon/logo.ico" sizes="any" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon/favicon-32x32.png" />
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon/favicon-16x16.png" />
+        <link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon.png" />
+        <meta name="theme-color" content="#0b2dff" />
+        <link rel="manifest" href="/favicon/site.webmanifest" />
+        <meta name="msapplication-TileColor" content="#0b2dff" />
+        <meta name="msapplication-config" content="/favicon/browserconfig.xml" />
         {/* Admin-provided custom <head> HTML (analytics, meta, fonts, etc.). */}
         {settings.headHtml ? (
           <div dangerouslySetInnerHTML={{ __html: settings.headHtml }} />

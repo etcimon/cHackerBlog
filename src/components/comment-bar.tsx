@@ -8,6 +8,7 @@ import { useCallback, useState } from "react";
 import { MessageCircle, Share2, Link as LinkIcon, Lock } from "lucide-react";
 import { api, ApiClientError } from "@/lib/api-client";
 import { useToast } from "@/components/toast";
+import { ShareModal } from "@/components/share-modal";
 
 interface CommentItem {
   id: string;
@@ -21,9 +22,23 @@ interface Props {
   slug: string;
   commentsEnabled?: boolean;
   commentCount?: number;
+  /** Article metadata used to build the share payload. */
+  title?: string;
+  seoDescription?: string;
+  seoKeywords?: string;
+  thumbnailUrl?: string | null;
 }
 
-export function CommentBar({ articleId, slug, commentsEnabled = true, commentCount = 0 }: Props) {
+export function CommentBar({
+  articleId,
+  slug,
+  commentsEnabled = true,
+  commentCount = 0,
+  title = "",
+  seoDescription = "",
+  seoKeywords = "",
+  thumbnailUrl = null,
+}: Props) {
   const [open, setOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [comments, setComments] = useState<CommentItem[]>([]);
@@ -31,6 +46,7 @@ export function CommentBar({ articleId, slug, commentsEnabled = true, commentCou
   const [body, setBody] = useState("");
   const [ageConfirmed, setAgeConfirmed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const toast = useToast();
 
   const toggle = useCallback(async () => {
@@ -79,11 +95,11 @@ export function CommentBar({ articleId, slug, commentsEnabled = true, commentCou
     }
   }, [articleId, name, body, ageConfirmed, toast]);
 
-  const share = useCallback(() => {
-    const url = `${window.location.origin}/#${slug}`;
-    void navigator.clipboard.writeText(url);
-    toast.info("Article link copied");
-  }, [slug, toast]);
+  // Canonical, crawlable, SEO-friendly article URL (no hash).
+  const articleUrl =
+    typeof window !== "undefined"
+      ? `${window.location.origin}/article/${slug}`
+      : `/article/${slug}`;
 
   return (
     <div className="mt-6 border-t border-border pt-4">
@@ -102,20 +118,32 @@ export function CommentBar({ articleId, slug, commentsEnabled = true, commentCou
           <span className="text-sm">{commentsEnabled ? `Comment` + (commentCount > 0 ? `s [${commentCount}]` : ``) : "Comments disabled"}</span>
         </button>
         <button
-          onClick={share}
+          onClick={() => setShareOpen(true)}
           className="flex items-center gap-1.5 transition-colors hover:text-accent"
         >
           <Share2 className="h-5 w-5" />
           <span className="text-sm">Share</span>
         </button>
         <a
-          href={`#${slug}`}
+          href={articleUrl}
           className="flex items-center gap-1.5 transition-colors hover:text-accent"
         >
           <LinkIcon className="h-5 w-5" />
           <span className="text-sm">Reference</span>
         </a>
       </div>
+
+      <ShareModal
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        payload={{
+          url: articleUrl,
+          title,
+          description: seoDescription,
+          keywords: seoKeywords,
+        }}
+        thumbnailUrl={thumbnailUrl}
+      />
 
       {open && commentsEnabled && (
         <div className="mt-4 animate-fade-in space-y-4">

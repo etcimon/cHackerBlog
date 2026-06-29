@@ -154,12 +154,14 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
   });
 
   return (
-    <article
-      id={item.slug}
-      data-testid="article-card"
-      className="animate-fade-in scroll-mt-24 border-b border-border py-10"
-    >
-      <header className="mb-3">
+    <>
+      <div id={`${item.slug}-top`} className="scroll-mt-0" />
+      <article
+        id={item.slug}
+        data-testid="article-card"
+        className="animate-fade-in scroll-mt-24 border-b border-border py-10"
+      >
+        <header id={`${item.slug}-header`} className="mb-3">
         <div className="mb-2 flex items-center justify-between">
           <div className="flex flex-wrap items-center gap-2">
             {item.tags.map((t) => (
@@ -203,7 +205,12 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
           </div>
         </div>
         <h2 className="font-heading text-3xl font-bold leading-tight text-fg">
-          {item.title}
+          <a
+            href={`/article/${item.slug}`}
+            className="transition-colors hover:text-accent"
+          >
+            {item.title}
+          </a>
         </h2>
         <p className="mt-1 text-sm text-muted">{date}</p>
       </header>
@@ -250,7 +257,19 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
         )}
       </div>
 
-      {open && <CommentBar articleId={item.id} slug={item.slug} commentsEnabled={commentsEnabled} commentCount={item.commentCount} />}
+      {open && (
+        <CommentBar
+          articleId={item.id}
+          slug={item.slug}
+          commentsEnabled={commentsEnabled}
+          commentCount={item.commentCount}
+          title={item.title}
+          seoDescription={item.seoDescription}
+          seoKeywords={item.seoKeywords}
+          thumbnailUrl={item.thumbnailUrl}
+        />
+      )}
     </article>
+    </>
   );
 }

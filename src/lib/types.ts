@@ -16,6 +16,12 @@ export interface FeedItem {
   pinnedAt: string | null;
   published: boolean;
   commentCount: number;
+  /** Auto-derived, comma-separated SEO keywords (see lib/seo.ts). */
+  seoKeywords: string;
+  /** Auto-derived meta/social description. */
+  seoDescription: string;
+  /** Resolved absolute share image (cover -> first img -> favicon). */
+  thumbnailUrl: string | null;
 }
 
 export interface FeedPage {

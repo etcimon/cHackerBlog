@@ -9,12 +9,15 @@
 [![Prisma](https://img.shields.io/badge/Prisma-7-2D3748?style=flat&logo=prisma)](https://www.prisma.io)
 [![Tests](https://github.com/etcimon/chackerblog/actions/workflows/test.yml/badge.svg)](https://github.com/etcimon/chackerblog/actions/workflows/test.yml)
 
+![Logo](/logo.jpg)
+
 **Repository:** <https://github.com/etcimon/chackerblog>
 
 ## Table of Contents
 
 - [Project Goals](#project-goals)
 - [Features](#features)
+- [SEO & Sharing](#seo--sharing)
 - [Tech Stack](#tech-stack)
 - [Architecture](#architecture)
 - [Quick Start](#quick-start)
@@ -60,6 +63,10 @@ cHackerBlog is designed as a modern, performant blogging platform that prioritiz
 - **Caching:** Redis-backed multi-level caching with configurable TTLs
 - **Rate Limiting:** Cloudflare-aware rate limiting with configurable windows
 - **Authentication:** Secure admin authentication with bcrypt password hashing
+
+## SEO & Sharing
+
+Every article is reachable through a canonical, crawlable slug path at `/article/<slug>`. This server route emits per-article Open Graph, Twitter Card, and canonical `<meta>` tags derived from auto-generated SEO fields (`seoKeywords`, `seoDescription`, `thumbnailUrl`), so social crawlers — which run no JavaScript — receive a correct title, description, and preview image without any API keys or authentication. Rather than rendering each article in isolation, the slug route locates the target article within a tag-scoped feed slice and hands it to the feed, which appends a `#<slug>-top` hash and smooth-scrolls the reader to the article's top anchor once the DOM is fully rendered. Social sharing is entirely URL-based: the share modal builds credential-free intent links for X, Facebook, LinkedIn, Reddit, WhatsApp, Telegram, and Email (plus copy-link and the native device share sheet), all pointing at the canonical slug URL.
 
 ## Custom Markdown Embedding
 

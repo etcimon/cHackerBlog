@@ -8,6 +8,8 @@ import { remember, invalidate } from "@/lib/cache";
 import { env } from "@/lib/env";
 import type { ArticleInput, FeedQuery } from "@/lib/schemas";
 import { truncateContent } from "@/lib/types";
+import { deriveSeo } from "@/lib/seo";
+import { getSettings } from "@/lib/settings";
 
 function slugify(input: string): string {
   return input
@@ -39,8 +41,57 @@ export interface FeedPage {
     published: boolean;
     /** Number of approved comments on the article. */
     commentCount: number;
+    /** Auto-derived, comma-separated SEO keywords (see lib/seo.ts). */
+    seoKeywords: string;
+    /** Auto-derived meta/social description. */
+    seoDescription: string;
+    /** Resolved absolute share image (cover -> first img -> favicon). */
+    thumbnailUrl: string | null;
   }>;
   nextCursor: string | null;
+}
+
+/** Shared row->FeedItem projection so every feed source stays identical. */
+type FeedRow = {
+  id: string;
+  slug: string;
+  title: string;
+  content: string;
+  coverUrl: string | null;
+  locale: string;
+  publishedAt: Date;
+  tags: { slug: string }[];
+  pinned: boolean;
+  pinnedAt: Date | null;
+  published: boolean;
+  seoKeywords: string;
+  seoDescription: string;
+  thumbnailUrl: string | null;
+  _count: { comments: number };
+};
+
+export function mapFeedRow(
+  a: FeedRow,
+  opts: { includeContent: boolean },
+): FeedPage["items"][number] {
+  return {
+    id: a.id,
+    slug: a.slug,
+    title: a.title,
+    preview: truncateContent(a.content, env.FEED_PREVIEW_CHARS),
+    coverUrl: a.coverUrl,
+    locale: a.locale,
+    publishedAt: a.publishedAt.toISOString(),
+    tags: a.tags.map((t) => t.slug),
+    pinned: a.pinned,
+    pinnedAt: a.pinnedAt?.toISOString() ?? null,
+    published: a.published,
+    commentCount: a._count.comments,
+    seoKeywords: a.seoKeywords,
+    seoDescription: a.seoDescription,
+    thumbnailUrl: a.thumbnailUrl,
+    ...(opts.includeContent ? { content: a.content } : {}),
+  };
 }
 
 /** Recency-ordered, tag-filterable cursor feed. */
@@ -80,21 +131,11 @@ export async function getFeed(query: FeedQuery): Promise<FeedPage> {
     const expandedCount = env.FEED_EXPANDED_COUNT;
 
     return {
-      items: page.map((a, idx) => ({
-        id: a.id,
-        slug: a.slug,
-        title: a.title,
-        preview: truncateContent(a.content, env.FEED_PREVIEW_CHARS),
-        coverUrl: a.coverUrl,
-        locale: a.locale,
-        publishedAt: a.publishedAt.toISOString(),
-        tags: a.tags.map((t: { slug: string }) => t.slug),
-        pinned: a.pinned,
-        pinnedAt: a.pinnedAt?.toISOString() ?? null,
-        published: a.published,
-        commentCount: a._count.comments,
-        ...(expandAll || (isFirstPage && idx < expandedCount) ? { content: a.content } : {}),
-      })),
+      items: page.map((a, idx) =>
+        mapFeedRow(a, {
+          includeContent: expandAll || (isFirstPage && idx < expandedCount),
+        }),
+      ),
       nextCursor: hasMore ? page[page.length - 1]!.id : null,
     };
   }
@@ -132,22 +173,12 @@ export async function getFeed(query: FeedQuery): Promise<FeedPage> {
     const expandedCount = env.FEED_EXPANDED_COUNT;
 
     return {
-      items: page.map((a, idx) => ({
-        id: a.id,
-        slug: a.slug,
-        title: a.title,
-        preview: truncateContent(a.content, env.FEED_PREVIEW_CHARS),
-        coverUrl: a.coverUrl,
-        locale: a.locale,
-        publishedAt: a.publishedAt.toISOString(),
-        tags: a.tags.map((t: { slug: string }) => t.slug),
-        pinned: a.pinned,
-        pinnedAt: a.pinnedAt?.toISOString() ?? null,
-        published: a.published,
-        commentCount: a._count.comments,
-        // Inline the body if expanding all, or for the first N articles of the first page.
-        ...(expandAll || (isFirstPage && idx < expandedCount) ? { content: a.content } : {}),
-      })),
+      items: page.map((a, idx) =>
+        // Inline the body if expanding all, or for the first N of the first page.
+        mapFeedRow(a, {
+          includeContent: expandAll || (isFirstPage && idx < expandedCount),
+        }),
+      ),
       nextCursor: hasMore ? page[page.length - 1]!.id : null,
     };
   });
@@ -191,6 +222,14 @@ export async function createArticle(input: ArticleInput) {
   for (let i = 2; await prisma.article.findUnique({ where: { slug } }); i++) {
     slug = `${baseSlug}-${i}`;
   }
+  // Derive SEO/social metadata once, at write time (no custom-edit fields).
+  const settings = await getSettings();
+  const seo = deriveSeo({
+    content: input.content,
+    coverUrl: input.coverUrl || null,
+    faviconUrl: settings.faviconUrl,
+    appUrl: env.APP_URL,
+  });
   const article = await prisma.article.create({
     data: {
       slug,
@@ -200,6 +239,7 @@ export async function createArticle(input: ArticleInput) {
       locale: input.locale,
       published: input.published,
       tags: { connect: tagConnect },
+      ...seo,
     },
     include: { tags: true },
   });
@@ -224,6 +264,15 @@ export async function updateArticle(id: string, input: ArticleInput) {
   // Disconnect all existing tags
   const disconnect = currentArticle.tags.map((tag: { id: string }) => ({ id: tag.id }));
 
+  // Re-derive SEO/social metadata from the new content on every update.
+  const settings = await getSettings();
+  const seo = deriveSeo({
+    content: input.content,
+    coverUrl: input.coverUrl || null,
+    faviconUrl: settings.faviconUrl,
+    appUrl: env.APP_URL,
+  });
+
   const article = await prisma.article.update({
     where: { id },
     data: {
@@ -236,6 +285,7 @@ export async function updateArticle(id: string, input: ArticleInput) {
         disconnect,
         connect: tagConnect,
       },
+      ...seo,
     },
     include: { tags: true },
   });

@@ -58,6 +58,15 @@ model Article {
   content     String    @default("") @map("content")
   coverUrl    String?   @map("cover_url")
 
+  // --- Auto-derived SEO / social metadata (no manual editing) --------------
+  // Recomputed on every create/update by lib/seo.ts. Stored (not computed on
+  // read) so feed/article cache and per-article OG <meta> stay cheap. Keywords
+  // are a comma-separated String (SQLite has no native arrays — see header).
+  seoKeywords    String  @default("") @map("seo_keywords")
+  seoDescription String  @default("") @map("seo_description")
+  // Resolved share image: explicit coverUrl -> first content <img> -> favicon.
+  thumbnailUrl   String? @map("thumbnail_url")
+
   published   Boolean   @default(true) @map("published")
   publishedAt DateTime  @default(now()) @map("published_at")
   createdAt   DateTime  @default(now()) @map("created_at")

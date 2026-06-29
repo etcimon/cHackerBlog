@@ -26,6 +26,26 @@
       background: rgb(var(--cb-accent) / 0.12);
     }
   }
+
+  // Share modal: sharp, neon-glow terminal panel with uppercase mono labels.
+  .share-modal {
+    border-radius: 0.5rem;
+    box-shadow: 0 0 0 1px rgb(var(--cb-accent) / 0.25),
+      0 0 28px rgb(var(--cb-accent) / 0.18);
+  }
+  .share-net {
+    border-radius: 0.375rem;
+    font-family: var(--cb-font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .share-net:hover {
+    box-shadow: 0 0 14px rgb(var(--cb-accent) / 0.3);
+  }
+  .share-native {
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
 }
 
 [data-theme="medium"] {
@@ -39,6 +59,18 @@
       border-radius: 0.75rem;
     }
   }
+
+  // Share modal: soft, generously rounded editorial sheet with a gentle shadow.
+  .share-modal {
+    border-radius: 1rem;
+    box-shadow: 0 20px 50px rgb(0 0 0 / 0.18);
+  }
+  .share-net {
+    border-radius: 0.875rem;
+  }
+  .share-net:hover {
+    box-shadow: 0 8px 20px rgb(0 0 0 / 0.1);
+  }
 }
 
 [data-theme="substack"] {
@@ -51,5 +83,21 @@
     .cb-code__pre {
       border-radius: 0.75rem;
     }
+  }
+
+  // Share modal: warm paper sheet; tinted preview + accent-tinted hover.
+  .share-modal {
+    border-radius: 1rem;
+    box-shadow: 0 20px 50px rgb(0 0 0 / 0.12);
+  }
+  .share-preview {
+    background: rgb(var(--cb-accent) / 0.05);
+  }
+  .share-net {
+    border-radius: 0.875rem;
+  }
+  .share-net:hover {
+    background: rgb(var(--cb-accent) / 0.06);
+    box-shadow: 0 8px 20px rgb(0 0 0 / 0.08);
   }
 }

@@ -312,6 +312,50 @@ body {
   }
 }
 
+// --- Social share modal -----------------------------------------------------
+// Structural chrome only (reads --cb-* tokens). Each theme refines accents and
+// motion feel in themes/_themes.scss. All motion is gated by reduced-motion.
+@keyframes share-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes share-pop-in {
+  from { opacity: 0; transform: translateY(16px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes share-tile-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.share-backdrop {
+  background: rgb(0 0 0 / 0.6);
+  backdrop-filter: blur(4px);
+  animation: share-backdrop-in 0.2s ease-out both;
+}
+.share-modal {
+  animation: share-pop-in 0.32s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.share-preview {
+  background: rgb(var(--cb-bg) / 0.4);
+}
+.share-net {
+  animation: share-tile-in 0.3s ease-out both;
+}
+.share-net__icon {
+  color: rgb(var(--cb-muted));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .share-backdrop,
+  .share-modal,
+  .share-net,
+  .share-native {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
 // --- Custom scrollbar matches the active theme ------------------------------
 ::-webkit-scrollbar {
   width: 10px;

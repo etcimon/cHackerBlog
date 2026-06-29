@@ -39,7 +39,7 @@ export function TagBar({ tags, active, onSelect, isAdmin = false }: Props) {
   };
 
   return (
-    <nav className="sticky top-0 z-40 -mx-4 mb-4 border-b border-border bg-bg/90 px-4 py-3 backdrop-blur">
+    <nav className="sticky top-0 z-40 -mx-4 mb-4 border-b border-border bg-bg/70 px-4 py-3 backdrop-blur">
       <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={() => onSelect(null)}

@@ -53,6 +53,8 @@ logs/*.log
 /test.sqlite
 /test.sqlite-journal
 /public/test-uploads
+test*.txt
+test*.log
 
 # TypeScript
 *.tsbuildinfo
@@ -90,3 +92,4 @@ lerna-debug.log*
 .temp
 .tmp
 bun.lock
+*.kra
