@@ -29,7 +29,10 @@ export default async function HomePage() {
             className="mb-6 h-48 w-full rounded-xl border border-border object-cover"
           />
         )}
-        <h1 className="font-heading text-5xl font-extrabold tracking-tight text-fg">
+        <h1
+          data-caret-home
+          className="font-heading text-5xl font-extrabold tracking-tight text-fg"
+        >
           {settings.title}
         </h1>
         {settings.description && (

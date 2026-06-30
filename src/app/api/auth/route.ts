@@ -12,7 +12,7 @@ import { getClientIp, rateLimit } from "@/lib/rate-limit";
 export const runtime = "nodejs";
 
 export const GET = handler(async () => {
-  return ok({ admin: isAdmin() });
+  return ok({ admin: await isAdmin() });
 });
 
 export const POST = handler(async (req: Request) => {
@@ -26,11 +26,11 @@ export const POST = handler(async (req: Request) => {
   if (!(await checkPassword(password))) {
     throw Errors.unauthorized("Invalid password");
   }
-  createSession();
+  await createSession();
   return ok({ admin: true });
 });
 
 export const DELETE = handler(async () => {
-  destroySession();
+  await destroySession();
   return ok({ admin: false });
 });

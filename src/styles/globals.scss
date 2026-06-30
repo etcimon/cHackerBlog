@@ -381,6 +381,30 @@ body {
     );
     z-index: 50;
   }
+
+  // Blinking underscore caret (see components/terminal-caret.tsx). Positioned
+  // in page coordinates by the component; the glow + blink sell the terminal.
+  .terminal-caret {
+    position: absolute;
+    z-index: 45;
+    pointer-events: none;
+    background: rgb(var(--cb-accent));
+    box-shadow:
+      0 0 6px rgb(var(--cb-accent) / 0.8),
+      0 0 12px rgb(var(--cb-accent) / 0.5);
+    animation: terminal-caret-blink 1.05s steps(1) infinite;
+  }
+}
+
+@keyframes terminal-caret-blink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  50.01%,
+  100% {
+    opacity: 0;
+  }
 }
 
 // Editorial themes get roomier, paper-like article text.
