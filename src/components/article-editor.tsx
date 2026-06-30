@@ -45,7 +45,7 @@ export function ArticleEditor({ article, allTags, onClose, onSaved }: Props) {
       content: "",
       coverUrl: article?.coverUrl ?? "",
       locale: article?.locale ?? "en",
-      published: true,
+      published: article?.published ?? true,
       tags: article?.tags ?? [],
     },
   });
@@ -57,8 +57,9 @@ export function ArticleEditor({ article, allTags, onClose, onSaved }: Props) {
   useEffect(() => {
     if (!articleId) return;
     let cancelled = false;
+    // Always pass admin=true for edit modal since it's only accessible to admins
     api
-      .get<{ content: string }>(`/api/articles/${articleId}`)
+      .get<{ content: string }>(`/api/articles/${articleId}?admin=true`)
       .then((d) => {
         if (cancelled) return;
         setContent(d.content);

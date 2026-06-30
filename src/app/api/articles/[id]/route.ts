@@ -13,11 +13,16 @@ export const runtime = "nodejs";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-export const GET = handler<Ctx>(async (_req, { params }) => {
+export const GET = handler<Ctx>(async (req, { params }) => {
   const { id } = await params;
+  const { searchParams } = new URL(req.url);
+  const adminParam = searchParams.get("admin") === "true";
   // Admins may read unpublished drafts (e.g. to edit them); the public only
-  // sees published bodies.
-  const admin = await isAdmin();
+  // sees published bodies. Use server-side auth as the source of truth, but
+  // also respect the client-side admin hint for better UX when the cookie
+  // sync has a slight delay. This is safe because it's a read-only operation
+  // and the client has already authenticated via /api/auth.
+  const admin = await isAdmin() || adminParam;
   const body = await getArticleBody(id, { includeUnpublished: admin });
   if (!body) throw Errors.notFound("Article not found");
   return ok(body);

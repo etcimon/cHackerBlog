@@ -137,7 +137,8 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
     }
     setLoading(true);
     try {
-      const data = await api.get<{ content: string }>(`/api/articles/${item.id}`);
+      const url = isAdmin ? `/api/articles/${item.id}?admin=true` : `/api/articles/${item.id}`;
+      const data = await api.get<{ content: string }>(url);
       setContent(data.content);
       setOpen(true);
     } catch (err) {
@@ -145,7 +146,7 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [content, item.id, toast]);
+  }, [content, item.id, toast, isAdmin]);
 
   const date = new Date(item.publishedAt).toLocaleDateString(item.locale, {
     year: "numeric",

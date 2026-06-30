@@ -178,30 +178,42 @@ export function Feed({
   }, [cursor, activeTag, prefetchPages, fetchPage]);
 
   const handleSaved = useCallback(async () => {
-    const editingId = editing?.id;
+    const editingSlug = editing?.slug;
     setEditing(null);
     setCreating(false);
     // Refresh tags after article save
     const updatedTags = await api.get<TagItem[]>("/api/tags");
     setAllTags(updatedTags);
-    await selectTag(activeTag); // refresh feed in place
 
-    // If we were editing an article, fetch the updated version and set it back
-    // so that clicking edit again loads the fresh data
-    if (editingId) {
-      try {
-        const updatedPage = await fetchPage({ reset: true });
-        if (updatedPage) {
-          const updatedArticle = updatedPage.items.find(item => item.id === editingId);
-          if (updatedArticle) {
-            setEditing(updatedArticle);
-          }
-        }
-      } catch (err) {
-        console.error("Failed to fetch updated article:", err);
-      }
+    // Reload the feed from the top (keeping the current tag filter, NOT scoping
+    // to the article's own tags) and keep paginating until the edited article is
+    // loaded into the DOM — so we can scroll to it even when it sits deep in the
+    // feed. This mirrors a reference-link jump: load everything up to it first.
+    let page = await fetchPage({ tag: activeTag, reset: true });
+    let found = page?.items.some((i) => i.slug === editingSlug) ?? false;
+    let next = page?.nextCursor ?? null;
+    let guard = 0;
+    while (editingSlug && !found && next && guard < 30) {
+      page = await fetchPage({ cursor: next, tag: activeTag });
+      found = page?.items.some((i) => i.slug === editingSlug) ?? false;
+      next = page?.nextCursor ?? null;
+      guard++;
     }
-  }, [activeTag, selectTag, editing?.id, fetchPage]);
+
+    // Append the hash and scroll to the article's top anchor once it's rendered.
+    if (editingSlug) {
+      const currentUrl = new URL(window.location.href);
+      currentUrl.hash = `${editingSlug}-top`;
+      window.history.replaceState({}, "", currentUrl.toString());
+      // Wait for DOM to render the freshly loaded items before scrolling.
+      setTimeout(() => {
+        const el = document.getElementById(`${editingSlug}-top`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      }, 300);
+    }
+  }, [activeTag, editing?.slug, fetchPage]);
 
   return (
     <>
