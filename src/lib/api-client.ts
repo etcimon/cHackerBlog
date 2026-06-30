@@ -29,16 +29,46 @@ export class ApiClientError extends Error {
   }
 }
 
-async function request<T>(input: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(input, {
-    ...init,
-    headers: {
-      ...(init?.body && !(init.body instanceof FormData)
-        ? { "Content-Type": "application/json" }
-        : {}),
-      ...init?.headers,
-    },
-  });
+/** Max attempts (1 initial + retries) for transient failures. */
+const MAX_ATTEMPTS = 3;
+/** Base backoff in ms; grows exponentially per attempt. */
+const RETRY_BASE_MS = 300;
+
+/**
+ * Only transient failures are worth retrying. 4xx responses (e.g. 404, 401,
+ * 422) are deterministic — retrying them just produces a tight loop — so we
+ * retry network errors and 5xx/429 server responses only.
+ */
+function isRetryable(err: unknown): boolean {
+  if (err instanceof ApiClientError) {
+    return err.status >= 500 || err.status === 429 || err.status === 0;
+  }
+  // Thrown by fetch itself (offline, DNS, abort): retry.
+  return true;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function requestOnce<T>(input: string, init?: RequestInit): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(input, {
+      ...init,
+      headers: {
+        ...(init?.body && !(init.body instanceof FormData)
+          ? { "Content-Type": "application/json" }
+          : {}),
+        ...init?.headers,
+      },
+    });
+  } catch {
+    // Network-level failure (no response). Surface as a retryable error.
+    throw new ApiClientError({
+      message: "Network request failed",
+      status: 0,
+      code: "NETWORK_ERROR",
+    });
+  }
 
   let json: ApiResponse<T>;
   try {
@@ -55,6 +85,21 @@ async function request<T>(input: string, init?: RequestInit): Promise<T> {
     throw new ApiClientError(json.error);
   }
   return json.data;
+}
+
+async function request<T>(input: string, init?: RequestInit): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      return await requestOnce<T>(input, init);
+    } catch (err) {
+      lastErr = err;
+      // Stop immediately on deterministic (non-retryable) errors like 404.
+      if (!isRetryable(err) || attempt === MAX_ATTEMPTS) break;
+      await sleep(RETRY_BASE_MS * 2 ** (attempt - 1));
+    }
+  }
+  throw lastErr;
 }
 
 export const api = {

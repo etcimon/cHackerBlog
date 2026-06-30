@@ -10,6 +10,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useState,
   type ReactNode,
 } from "react";
@@ -55,11 +56,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     [remove],
   );
 
-  const api: ToastApi = {
-    success: (m) => push("success", m),
-    error: (m) => push("error", m),
-    info: (m) => push("info", m),
-  };
+  const api: ToastApi = useMemo(
+    () => ({
+      success: (m) => push("success", m),
+      error: (m) => push("error", m),
+      info: (m) => push("info", m),
+    }),
+    [push],
+  );
 
   return (
     <ToastContext.Provider value={api}>

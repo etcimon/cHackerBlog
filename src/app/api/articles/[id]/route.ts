@@ -7,7 +7,7 @@
 import { handler, ok, Errors } from "@/lib/errors";
 import { articleInputSchema, articlePartialUpdateSchema } from "@/lib/schemas";
 import { getArticleBody, updateArticle, deleteArticle, updateArticlePartial } from "@/lib/articles";
-import { requireAdmin } from "@/lib/auth";
+import { isAdmin, requireAdmin } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -15,7 +15,10 @@ type Ctx = { params: Promise<{ id: string }> };
 
 export const GET = handler<Ctx>(async (_req, { params }) => {
   const { id } = await params;
-  const body = await getArticleBody(id);
+  // Admins may read unpublished drafts (e.g. to edit them); the public only
+  // sees published bodies.
+  const admin = await isAdmin();
+  const body = await getArticleBody(id, { includeUnpublished: admin });
   if (!body) throw Errors.notFound("Article not found");
   return ok(body);
 });

@@ -184,8 +184,25 @@ export async function getFeed(query: FeedQuery): Promise<FeedPage> {
   });
 }
 
-/** Fetch a single article's full body (used by in-place "full text" expansion). */
-export async function getArticleBody(id: string): Promise<{ content: string } | null> {
+/**
+ * Fetch a single article's full body. Used by:
+ *  - the public in-place "full text" expansion (published only, cached), and
+ *  - the admin editor, which must also read unpublished drafts (uncached).
+ */
+export async function getArticleBody(
+  id: string,
+  opts: { includeUnpublished?: boolean } = {},
+): Promise<{ content: string } | null> {
+  // Admin path: read drafts directly without touching the public cache.
+  if (opts.includeUnpublished) {
+    const prisma = getPrisma();
+    const a = await prisma.article.findUnique({
+      where: { id },
+      select: { content: true },
+    });
+    return a ? { content: a.content } : null;
+  }
+
   return remember("article", id, async () => {
     const prisma = getPrisma();
     const a = await prisma.article.findUnique({

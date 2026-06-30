@@ -50,20 +50,29 @@ export function ArticleEditor({ article, allTags, onClose, onSaved }: Props) {
     },
   });
 
-  // Load full body when editing an existing article.
+  // Load full body when editing an existing article. Keyed on the article id
+  // only (not the whole object or toast identity) so it fetches exactly once per
+  // opened article and never loops if the request fails.
+  const articleId = article?.id;
   useEffect(() => {
-    if (!article) return;
+    if (!articleId) return;
+    let cancelled = false;
     api
-      .get<{ content: string }>(`/api/articles/${article.id}`)
+      .get<{ content: string }>(`/api/articles/${articleId}`)
       .then((d) => {
+        if (cancelled) return;
         setContent(d.content);
         setValue("content", d.content);
       })
       .catch((err) => {
+        if (cancelled) return;
         console.error("Failed to load article:", err);
         toast.error(err instanceof ApiClientError ? err.message : "Failed to load article");
       });
-  }, [article, setValue, toast]);
+    return () => {
+      cancelled = true;
+    };
+  }, [articleId]);
 
   // Sync localTags with allTags prop when it changes
   useEffect(() => {
