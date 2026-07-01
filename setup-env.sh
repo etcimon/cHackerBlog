@@ -216,6 +216,18 @@ env_content=$(echo "$env_content" | sed "s/^LOG_LEVEL=.*/LOG_LEVEL=error/")
 # Write .env file
 echo "$env_content" > .env
 
+# Update Prisma schema provider
+echo -e "${YELLOW}Updating Prisma schema provider to $db_provider...${NC}"
+schema_path="prisma/schema.prisma"
+if [ -f "$schema_path" ]; then
+    sed -i.bak 's/provider = "sqlite"/provider = "'"$db_provider"'"/g' "$schema_path"
+    sed -i.bak 's/provider = "postgresql"/provider = "'"$db_provider"'"/g' "$schema_path"
+    rm -f "${schema_path}.bak"
+    echo -e "${GREEN}✓ Prisma schema updated to use $db_provider${NC}"
+else
+    echo -e "${YELLOW}⚠ Prisma schema file not found at $schema_path${NC}"
+fi
+
 echo ""
 echo -e "${GREEN}✓ .env file created successfully${NC}"
 echo ""

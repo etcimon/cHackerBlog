@@ -5,6 +5,7 @@ const nextConfig = {
   images: {
     remotePatterns: [{ protocol: "https", hostname: "**" }],
   },
+  output: "standalone",
   experimental: {
     // Keep server-only packages (ioredis, nodemailer, prisma) out of the client bundle.
     serverComponentsExternalPackages: ["ioredis", "nodemailer", "@prisma/client", "bcryptjs"],

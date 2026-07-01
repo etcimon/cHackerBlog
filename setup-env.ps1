@@ -57,21 +57,21 @@ function Test-Redis {
 
 # Function to check if PostgreSQL is running
 function Test-PostgreSQL {
-    param([string]$Host = "localhost", [int]$Port = 5432)
-    
+    param([string]$DbHost = "localhost", [int]$Port = 5432)
+
     Write-Host "Checking PostgreSQL connection..." -ForegroundColor Yellow
     try {
         if (Test-Command "psql") {
-            $result = psql -h $Host -p $Port -U postgres -c "SELECT 1" 2>&1
+            $null = psql -h $DbHost -p $Port -U postgres -c "SELECT 1" 2>&1
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "✓ PostgreSQL is running and accessible" -ForegroundColor Green
                 return $true
             }
         }
-        
+
         # Try using Test-NetConnection if psql is not available
         try {
-            $connection = Test-NetConnection -ComputerName $Host -Port $Port -WarningAction SilentlyContinue -InformationLevel Quiet
+            $connection = Test-NetConnection -ComputerName $DbHost -Port $Port -WarningAction SilentlyContinue -InformationLevel Quiet
             if ($connection) {
                 Write-Host "✓ PostgreSQL port $Port is accessible" -ForegroundColor Green
                 return $true
@@ -79,7 +79,7 @@ function Test-PostgreSQL {
         } catch {
             # Ignore errors
         }
-        
+
         Write-Host "✗ PostgreSQL is not running or not accessible" -ForegroundColor Red
         Write-Host "  Please install PostgreSQL and start it:" -ForegroundColor Red
         Write-Host "  - Windows: Download from https://www.postgresql.org/download/windows/" -ForegroundColor Red
@@ -217,6 +217,19 @@ $envContent = $envContent -replace '^LOG_LEVEL=.*', 'LOG_LEVEL=error'
 
 # Write .env file
 $envContent | Out-File -FilePath ".env" -Encoding UTF8 -NoNewline
+
+# Update Prisma schema provider
+Write-Host "Updating Prisma schema provider to $dbProvider..." -ForegroundColor Yellow
+$schemaPath = "prisma/schema.prisma"
+if (Test-Path $schemaPath) {
+    $schemaContent = Get-Content $schemaPath -Raw
+    $schemaContent = $schemaContent -replace 'provider = "sqlite"', "provider = `"$dbProvider`""
+    $schemaContent = $schemaContent -replace 'provider = "postgresql"', "provider = `"$dbProvider`""
+    $schemaContent | Out-File -FilePath $schemaPath -Encoding UTF8 -NoNewline
+    Write-Host "✓ Prisma schema updated to use $dbProvider" -ForegroundColor Green
+} else {
+    Write-Host "⚠ Prisma schema file not found at $schemaPath" -ForegroundColor Yellow
+}
 
 Write-Host ""
 Write-Host "✓ .env file created successfully" -ForegroundColor Green
