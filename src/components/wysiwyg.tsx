@@ -252,10 +252,85 @@ marked.use({
 const turndown = new TurndownService({ headingStyle: "atx" });
 addEmbedTurndownRule(turndown);
 
+/* ------------------ caret preservation across mode switch ---------------- */
+// "Blocks" are the top-level children of the rich surface and the blank-line
+// separated segments of the markdown source. We anchor the caret to the block
+// it currently sits in ("the equivalent element above it") and, after the mode
+// switch, drop the caret at the end of the matching block — or at the very
+// start if none maps across.
+
+/** Index of the top-level block in `root` that contains the current caret. */
+function getRichCaretBlockIndex(root: HTMLElement): number {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return 0;
+  let node: Node | null = sel.getRangeAt(0).startContainer;
+  if (!node || !root.contains(node)) return 0;
+  while (node && node.parentNode !== root) node = node.parentNode;
+  if (!node) return 0;
+  const idx = Array.from(root.children).indexOf(node as Element);
+  return idx < 0 ? 0 : idx;
+}
+
+/** Drop the caret at the end of the `index`-th top-level block (start if none). */
+function placeRichCaretAtBlock(root: HTMLElement, index: number): void {
+  const sel = window.getSelection();
+  if (!sel) return;
+  const blocks = Array.from(root.children);
+  const range = document.createRange();
+  const target = index >= 0 ? blocks[Math.min(index, blocks.length - 1)] : undefined;
+  if (target) {
+    range.selectNodeContents(target);
+    range.collapse(false); // end of the equivalent block
+  } else {
+    range.selectNodeContents(root);
+    range.collapse(true); // start
+  }
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+/** Char ranges of each blank-line-separated markdown block. */
+function mdBlockRanges(md: string): Array<{ start: number; end: number }> {
+  const ranges: Array<{ start: number; end: number }> = [];
+  const re = /\n[ \t]*\n/g;
+  let start = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(md)) !== null) {
+    ranges.push({ start, end: m.index });
+    start = m.index + m[0].length;
+  }
+  ranges.push({ start, end: md.length });
+  return ranges;
+}
+
+/** Index of the markdown block containing the textarea caret. */
+function getMdCaretBlockIndex(ta: HTMLTextAreaElement): number {
+  const pos = ta.selectionStart ?? 0;
+  const ranges = mdBlockRanges(ta.value);
+  for (let i = 0; i < ranges.length; i++) {
+    if (pos <= ranges[i]!.end) return i;
+  }
+  return Math.max(0, ranges.length - 1);
+}
+
+/** Drop the textarea caret at the end of the `index`-th block (start if none). */
+function placeMdCaretAtBlock(ta: HTMLTextAreaElement, index: number): void {
+  const ranges = mdBlockRanges(ta.value);
+  if (index < 0 || ranges.length === 0) {
+    ta.setSelectionRange(0, 0);
+    return;
+  }
+  const pos = ranges[Math.min(index, ranges.length - 1)]!.end;
+  ta.setSelectionRange(pos, pos);
+}
+
 export function Wysiwyg({ value, onChange }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  const mdRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const attachRef = useRef<HTMLInputElement>(null);
+  // Block index captured at toggle time, applied to the textarea once it mounts.
+  const pendingCaretRef = useRef<number | null>(null);
   const toast = useToast();
   const [mode, setMode] = useState<"rich" | "md">("rich");
   const [md, setMd] = useState("");
@@ -350,6 +425,8 @@ export function Wysiwyg({ value, onChange }: Props) {
 
   // When toggling to md, convert current HTML → md.
   const toggleToMd = useCallback(() => {
+    // Capture the caret's block position before the surface is torn down.
+    const caretIdx = ref.current ? getRichCaretBlockIndex(ref.current) : 0;
     const html = ref.current?.innerHTML ?? value;
     // Clear the contentEditable div immediately to prevent it from showing
     if (ref.current) {
@@ -363,24 +440,45 @@ export function Wysiwyg({ value, onChange }: Props) {
     // Register the embed rule so embed HTML collapses back to @[name](url)
     addEmbedTurndownRule(turndownService);
     const markdown = turndownService.turndown(html);
+    pendingCaretRef.current = caretIdx;
     setMd(markdown);
     setMode("md");
   }, [value]);
 
   // When toggling to rich, convert md → HTML and emit.
   const toggleToRich = useCallback(() => {
+    // Capture the caret's markdown block before conversion.
+    const caretIdx = mdRef.current ? getMdCaretBlockIndex(mdRef.current) : 0;
     const html = marked(md) as string;
     onChange(html);
     setMd(""); // Clear markdown state when switching back to rich
     setMode("rich");
-    // Sync the contentEditable surface after render, then wire code toggles.
+    // Sync the contentEditable surface after render, then wire code toggles and
+    // hand the caret off to the equivalent block, focusing seamlessly.
     requestAnimationFrame(() => {
       if (ref.current) {
         ref.current.innerHTML = html;
         wireCodeBlockToggles(ref.current, codeToggleOptions);
+        ref.current.focus();
+        placeRichCaretAtBlock(ref.current, caretIdx);
       }
     });
   }, [md, onChange, codeToggleOptions]);
+
+  // After switching to Markdown, restore the caret to the block mirroring the
+  // rich-mode position and focus the textarea (seamless hand-off). Guarded by
+  // pendingCaretRef so it only fires on an actual mode toggle, not keystrokes.
+  useEffect(() => {
+    if (mode !== "md" || pendingCaretRef.current === null) return;
+    const idx = pendingCaretRef.current;
+    pendingCaretRef.current = null;
+    const ta = mdRef.current;
+    if (!ta) return;
+    requestAnimationFrame(() => {
+      ta.focus();
+      placeMdCaretAtBlock(ta, idx);
+    });
+  }, [mode, md]);
 
   const exec = useCallback(
     (command: string, arg?: string) => {
@@ -468,7 +566,7 @@ export function Wysiwyg({ value, onChange }: Props) {
 
   return (
     <div className="rounded-md border border-border bg-card">
-      <div className="flex flex-wrap items-center justify-between gap-1 border-b border-border p-1.5">
+      <div className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-1 rounded-t-md border-b border-border bg-card/90 p-1.5 backdrop-blur">
         <div className="flex flex-wrap items-center gap-1">
           <button
             type="button"
@@ -553,6 +651,7 @@ export function Wysiwyg({ value, onChange }: Props) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2">
           <textarea
+            ref={mdRef}
             value={md}
             onChange={(e) => setMd(e.target.value)}
             className="article-body min-h-[260px] border-r border-border bg-bg px-4 py-3 text-fg outline-none resize-none"

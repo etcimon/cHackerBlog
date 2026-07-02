@@ -15,6 +15,7 @@
  * stagger in; everything respects prefers-reduced-motion via the SCSS layer.
  */
 import { useCallback, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { X, Link as LinkIcon, Check, Share2, Mail } from "lucide-react";
 import { useToast } from "@/components/toast";
 import {
@@ -137,7 +138,11 @@ export function ShareModal({ open, onClose, payload, thumbnailUrl }: Props) {
     /* keep raw url */
   }
 
-  return (
+  // Portal to <body> so the fixed overlay escapes any transformed ancestor
+  // (article cards animate via `transform`, which would otherwise trap this
+  // fixed box in a local stacking context and let the terminal caret paint over
+  // it). At the document root its `z-[60]` reliably sits above the caret.
+  return createPortal(
     <div
       className="share-backdrop fixed inset-0 z-[60] flex items-end justify-start p-4 sm:items-end sm:justify-start"
       onClick={onClose}
@@ -221,6 +226,7 @@ export function ShareModal({ open, onClose, payload, thumbnailUrl }: Props) {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
