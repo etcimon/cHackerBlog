@@ -72,29 +72,34 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
     [],
   );
 
+  // What to render in the article body: the full content when open, otherwise
+  // the HTML preview (present only when the article defines a `--END PREVIEW--`
+  // separator). Undefined means "nothing to render yet" (e.g. body not fetched).
+  const bodyHtml = open ? content : item.previewHtml;
+
   // Wire the collapse toggles synchronously after every body (re-)render. Doing
   // this in a layout effect (not gated behind async highlighting) guarantees the
   // toggles work no matter how many code blocks/languages are present, and
   // re-applies the persisted expanded state before paint so it never flickers
   // back to collapsed.
   useIsoLayoutEffect(() => {
-    if (open && content !== undefined && articleBodyRef.current) {
+    if (bodyHtml !== undefined && articleBodyRef.current) {
       wireCodeBlockToggles(articleBodyRef.current, codeToggleOptions);
     }
-  }, [open, content, codeToggleOptions]);
+  }, [bodyHtml, codeToggleOptions]);
 
   // Apply syntax highlighting asynchronously (lazy-loads hljs + languages), then
   // re-wire/restore in case highlighting replaced any markup.
   useEffect(() => {
-    if (open && content !== undefined && articleBodyRef.current) {
-      ensureHighlightJsReady(content).then(() => {
+    if (bodyHtml !== undefined && articleBodyRef.current) {
+      ensureHighlightJsReady(bodyHtml).then(() => {
         if (articleBodyRef.current) {
           highlightCodeInElement(articleBodyRef.current);
           wireCodeBlockToggles(articleBodyRef.current, codeToggleOptions);
         }
       });
     }
-  }, [open, content, codeToggleOptions]);
+  }, [bodyHtml, codeToggleOptions]);
 
   const handlePin = async () => {
     setPinning(true);
@@ -225,13 +230,15 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
         />
       )}
 
-      {!open && <p className="text-lg leading-relaxed text-fg/90">{item.preview}</p>}
+      {!open && !item.previewHtml && (
+        <p className="text-lg leading-relaxed text-fg/90">{item.preview}</p>
+      )}
 
-      {open && content !== undefined && (
+      {bodyHtml !== undefined && (
         <div
           ref={articleBodyRef}
-          className="article-body animate-expand overflow-hidden text-lg text-fg/90"
-          dangerouslySetInnerHTML={{ __html: content }}
+          className={`article-body overflow-hidden text-lg text-fg/90${open ? " animate-expand" : ""}`}
+          dangerouslySetInnerHTML={{ __html: bodyHtml }}
         />
       )}
 

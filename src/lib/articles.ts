@@ -8,6 +8,7 @@ import { remember, invalidate } from "@/lib/cache";
 import { env } from "@/lib/env";
 import type { ArticleInput, FeedQuery } from "@/lib/schemas";
 import { truncateContent } from "@/lib/types";
+import { extractPreviewHtml } from "@/lib/embeds";
 import { deriveSeo } from "@/lib/seo";
 import { getSettings } from "@/lib/settings";
 
@@ -31,6 +32,8 @@ export interface FeedPage {
     tags: string[];
     /** Truncated preview from full content. */
     preview: string;
+    /** HTML preview up to a `--END PREVIEW--` separator, when one is present. */
+    previewHtml?: string;
     /** Full body only included for the very first feed item. */
     content?: string;
     /** Whether the article is pinned to the top of the feed. */
@@ -79,6 +82,11 @@ export function mapFeedRow(
     slug: a.slug,
     title: a.title,
     preview: truncateContent(a.content, env.FEED_PREVIEW_CHARS),
+    // A `--END PREVIEW--` separator overrides the character-truncated preview:
+    // render everything before it verbatim (full code blocks, embeds, etc.).
+    ...(extractPreviewHtml(a.content)
+      ? { previewHtml: extractPreviewHtml(a.content) as string }
+      : {}),
     coverUrl: a.coverUrl,
     locale: a.locale,
     publishedAt: a.publishedAt.toISOString(),

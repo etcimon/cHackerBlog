@@ -14,6 +14,11 @@ import {
   buildImageMarkdown,
   registerImageSizeExtension,
   addImageTurndownRule,
+  buildPreviewEndHtml,
+  extractPreviewHtml,
+  registerPreviewEndExtension,
+  addPreviewEndTurndownRule,
+  PREVIEW_END_MARKER,
   parseSizeSpec,
   sizeSpecToString,
   type EmbedSize,
@@ -415,5 +420,102 @@ describe("Sized Image Markdown Round-Trip", () => {
     expect(html).toContain("data-cb-img");
     const roundTripped = turndown.turndown(html).trim();
     expect(roundTripped).toContain("![alt](http://example.com/p.png){small}");
+  });
+});
+
+describe("Preview Separator Builders", () => {
+  it("buildPreviewEndHtml should emit an <hr> carrying data-preview-end", () => {
+    const html = buildPreviewEndHtml();
+    expect(html).toContain("<hr");
+    expect(html).toContain('data-preview-end="1"');
+    expect(html).toContain("cb-preview-end");
+  });
+
+  it("PREVIEW_END_MARKER should be the canonical markdown form", () => {
+    expect(PREVIEW_END_MARKER).toBe("--END PREVIEW--");
+  });
+});
+
+describe("extractPreviewHtml", () => {
+  it("returns null when no separator is present", () => {
+    expect(extractPreviewHtml("<p>Just a body</p>")).toBeNull();
+  });
+
+  it("returns the HTML before the separator, trimmed", () => {
+    const html = `<p>Intro</p>${buildPreviewEndHtml()}<p>Hidden</p>`;
+    expect(extractPreviewHtml(html)).toBe("<p>Intro</p>");
+  });
+
+  it("keeps a full code block before the separator intact", () => {
+    const codeBlock =
+      '<div class="cb-code"><pre class="cb-code__pre"><code class="language-ts">const x = 1;</code></pre></div>';
+    const html = `${codeBlock}${buildPreviewEndHtml()}<p>After</p>`;
+    const preview = extractPreviewHtml(html);
+    expect(preview).toBe(codeBlock);
+    expect(preview).not.toContain("After");
+  });
+
+  it("matches the separator regardless of attribute order", () => {
+    const html =
+      '<p>Intro</p><hr class="cb-preview-end" data-preview-end="1" /><p>Rest</p>';
+    expect(extractPreviewHtml(html)).toBe("<p>Intro</p>");
+  });
+});
+
+describe("Preview Separator Markdown Round-Trip", () => {
+  let turndown: TurndownService;
+
+  beforeAll(() => {
+    registerPreviewEndExtension(marked);
+  });
+
+  beforeEach(() => {
+    turndown = new TurndownService({
+      headingStyle: "atx",
+      codeBlockStyle: "fenced",
+    });
+    addPreviewEndTurndownRule(turndown);
+  });
+
+  it("renders --END PREVIEW-- as an <hr data-preview-end>", () => {
+    const html = marked.parse("--END PREVIEW--") as string;
+    expect(html).toContain("data-preview-end");
+    expect(html).toContain("cb-preview-end");
+  });
+
+  it("round-trips the bare separator back to --END PREVIEW--", () => {
+    const html = marked.parse("--END PREVIEW--") as string;
+    const md = turndown.turndown(html).trim();
+    expect(md).toBe("--END PREVIEW--");
+  });
+
+  it("preserves the separator inside a larger document", () => {
+    const markdown = [
+      "# Title",
+      "",
+      "Intro paragraph.",
+      "",
+      "--END PREVIEW--",
+      "",
+      "Hidden paragraph.",
+    ].join("\n");
+    const html = marked.parse(markdown) as string;
+    expect(html).toContain("data-preview-end");
+
+    const md = turndown.turndown(html).trim();
+    expect(md).toContain("# Title");
+    expect(md).toContain("Intro paragraph.");
+    expect(md).toContain("--END PREVIEW--");
+    expect(md).toContain("Hidden paragraph.");
+    // Order is preserved: separator sits between the intro and the hidden body.
+    expect(md.indexOf("Intro paragraph.")).toBeLessThan(md.indexOf("--END PREVIEW--"));
+    expect(md.indexOf("--END PREVIEW--")).toBeLessThan(md.indexOf("Hidden paragraph."));
+  });
+
+  it("leaves a normal horizontal rule (---) untouched", () => {
+    const html = marked.parse("above\n\n---\n\nbelow") as string;
+    expect(html).not.toContain("data-preview-end");
+    const md = turndown.turndown(html).trim();
+    expect(md).not.toContain("--END PREVIEW--");
   });
 });

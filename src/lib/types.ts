@@ -11,6 +11,12 @@ export interface FeedItem {
   publishedAt: string;
   tags: string[];
   preview: string;
+  /**
+   * HTML preview up to a `--END PREVIEW--` separator, when the article defines
+   * one. Rendered as-is (full elements, e.g. entire code blocks) instead of the
+   * character-truncated `preview`. Absent when no separator is present.
+   */
+  previewHtml?: string;
   content?: string;
   pinned: boolean;
   pinnedAt: string | null;

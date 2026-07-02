@@ -20,6 +20,7 @@ import {
   Type,
   Eye,
   EyeOff,
+  SeparatorHorizontal,
 } from "lucide-react";
 import { api, ApiClientError } from "@/lib/api-client";
 import { useToast } from "@/components/toast";
@@ -30,6 +31,8 @@ import {
   FILE_ACCEPT,
   buildEmbedHtml,
   buildEmbedMarkdown,
+  buildPreviewEndHtml,
+  PREVIEW_END_MARKER,
   registerEmbedExtension,
   addEmbedTurndownRule,
   parseSizeSpec,
@@ -499,6 +502,24 @@ export function Wysiwyg({ value, onChange }: Props) {
     [onChange],
   );
 
+  // Insert the `--END PREVIEW--` separator at the caret in either mode. In rich
+  // mode it drops the <hr data-preview-end> chrome; in markdown mode it splices
+  // the marker in at the textarea caret (falling back to an append).
+  const insertPreviewSeparator = useCallback(() => {
+    if (mode === "rich") {
+      insertHtml(buildPreviewEndHtml());
+      return;
+    }
+    const ta = mdRef.current;
+    if (ta) {
+      const start = ta.selectionStart ?? md.length;
+      const end = ta.selectionEnd ?? md.length;
+      setMd(`${md.slice(0, start)}\n\n${PREVIEW_END_MARKER}\n\n${md.slice(end)}`);
+    } else {
+      setMd((prev) => `${prev}\n\n${PREVIEW_END_MARKER}\n\n`);
+    }
+  }, [mode, md, insertHtml]);
+
   const handleInput = useCallback(() => {
     if (ref.current) onChange(ref.current.innerHTML);
   }, [onChange]);
@@ -609,6 +630,9 @@ export function Wysiwyg({ value, onChange }: Props) {
           )}
         </div>
         <div className="flex items-center gap-1">
+          <Btn title="Insert preview separator (--END PREVIEW--)" onClick={insertPreviewSeparator}>
+            <SeparatorHorizontal className="h-4 w-4" />
+          </Btn>
           <Btn title="Insert image" onClick={() => fileRef.current?.click()}>
             <ImageIcon className="h-4 w-4" />
           </Btn>

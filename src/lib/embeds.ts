@@ -676,6 +676,89 @@ export function addImageTurndownRule(turndown: {
   });
 }
 
+/* -------------------------- preview separator ---------------------------- */
+/**
+ * `--END PREVIEW--` on its own line marks where the feed preview should stop.
+ * It renders as an <hr> carrying `data-preview-end="1"` so it round-trips back
+ * to the marker via turndown, and so the feed can split the stored HTML on it
+ * (see `extractPreviewHtml`) to show everything before it — full code blocks and
+ * all — instead of the automatic character-truncated preview.
+ */
+export const PREVIEW_END_MARKER = "--END PREVIEW--";
+
+/** Canonical HTML for the preview separator. */
+export function buildPreviewEndHtml(): string {
+  return `<hr data-preview-end="1" class="cb-preview-end" />`;
+}
+
+/** Matches the stored preview-separator <hr> (any attribute order). */
+export const PREVIEW_END_HTML_RE = /<hr\b[^>]*\bdata-preview-end\b[^>]*>/i;
+
+/**
+ * If `html` contains the preview separator, return the HTML *before* it
+ * (trimmed); otherwise return null. Used by the feed to render an HTML preview
+ * that stops exactly at the marker rather than truncating plain text.
+ */
+export function extractPreviewHtml(html: string): string | null {
+  const m = PREVIEW_END_HTML_RE.exec(html);
+  if (!m) return null;
+  return html.slice(0, m.index).trim();
+}
+
+/** Matches the `--END PREVIEW--` marker as its own block at the input start. */
+const PREVIEW_END_RULE = /^--END PREVIEW--[ \t]*(?:\n+|$)/;
+
+/**
+ * Register the `--END PREVIEW--` block tokenizer + renderer on a marked
+ * instance. Idempotent per-instance via a private flag.
+ */
+export function registerPreviewEndExtension(marked: {
+  use: (...args: import("marked").MarkedExtension[]) => typeof marked;
+}): void {
+  const flagged = marked as unknown as { __cbPreviewEnd?: boolean };
+  if (flagged.__cbPreviewEnd) return;
+  flagged.__cbPreviewEnd = true;
+
+  marked.use({
+    extensions: [
+      {
+        name: "previewEnd",
+        level: "block",
+        start(src: string) {
+          const i = src.indexOf("--END PREVIEW--");
+          return i < 0 ? undefined : i;
+        },
+        tokenizer(src: string) {
+          const m = PREVIEW_END_RULE.exec(src);
+          if (!m) return undefined;
+          return { type: "previewEnd", raw: m[0] };
+        },
+        renderer() {
+          return `${buildPreviewEndHtml()}\n`;
+        },
+      },
+    ],
+  });
+}
+
+/**
+ * Add a turndown rule that collapses the preview-separator <hr> back into the
+ * `--END PREVIEW--` marker. Only matches HRs carrying `data-preview-end`; plain
+ * horizontal rules fall through to turndown's default handling.
+ */
+export function addPreviewEndTurndownRule(turndown: {
+  addRule: (key: string, rule: unknown) => void;
+}): void {
+  turndown.addRule("cbPreviewEnd", {
+    filter: (node: HTMLElement) =>
+      node.nodeType === 1 &&
+      node.nodeName === "HR" &&
+      typeof node.getAttribute === "function" &&
+      node.getAttribute("data-preview-end") != null,
+    replacement: () => `\n\n${PREVIEW_END_MARKER}\n\n`,
+  });
+}
+
 /** Matches a single `@[name size](url)` tag at the start of the input. */
 const ATTACHMENT_RULE = /^@\[([^\]]+)\]\(\s*([^)\s]+)\s*\)/;
 
@@ -689,6 +772,8 @@ export function registerEmbedExtension(marked: {
   // Sized images share the same markdown feature set; register them here so
   // every embed-enabled marked instance also understands `![alt](url){spec}`.
   registerImageSizeExtension(marked);
+  // The `--END PREVIEW--` separator is part of the same authoring toolkit.
+  registerPreviewEndExtension(marked);
 
   const flagged = marked as unknown as { __cbEmbed?: boolean };
   if (flagged.__cbEmbed) return;
@@ -761,6 +846,8 @@ export function addEmbedTurndownRule(turndown: {
   // Sized images belong to the same round-trip system; register their rule so
   // every embed-enabled turndown instance collapses them back to markdown.
   addImageTurndownRule(turndown);
+  // Collapse the preview-separator <hr> back to `--END PREVIEW--`.
+  addPreviewEndTurndownRule(turndown);
 
   turndown.addRule("cbEmbed", {
     filter: (node: HTMLElement) =>

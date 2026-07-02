@@ -89,6 +89,29 @@ body {
   color: rgb(var(--cb-muted));
   font-style: italic;
 }
+// Preview separator (`--END PREVIEW--` -> <hr data-preview-end>): a labelled
+// dashed accent rule marking where the feed preview stops. Distinct from a
+// plain <hr> so authors can see the boundary in the full article view.
+.article-body hr.cb-preview-end {
+  position: relative;
+  border: 0;
+  border-top: 2px dashed rgb(var(--cb-accent) / 0.55);
+  margin: 2em 0;
+  overflow: visible;
+}
+.article-body hr.cb-preview-end::after {
+  content: "PREVIEW END";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 0 0.5rem;
+  background: rgb(var(--cb-bg));
+  color: rgb(var(--cb-accent) / 0.8);
+  font-family: var(--cb-font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+}
 
 // --- Code blocks (syntax highlighted + collapsible) -------------------------
 // Token colours come from the highlight.js stylesheet selected via CODE_THEME
