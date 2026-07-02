@@ -525,6 +525,157 @@ export function buildEmbedMarkdown({ name, src, size }: EmbedInput): string {
   return `@[${name}](${src})`;
 }
 
+/* ---------------------------- sized images ------------------------------ */
+/**
+ * Input for a sized inline image. Mirrors `EmbedInput` but for the standard
+ * Markdown image syntax with a trailing size spec:
+ *
+ *     ![alt](url){small}
+ *     ![alt](url){width=250 height=300}
+ *     ![alt](url){50%}
+ *     ![alt](url){640x360}
+ *
+ * The size spec reuses the same grammar as embeds via `parseSizeSpec` /
+ * `sizeSpecToString`, so both features stay in lockstep.
+ */
+export interface ImageInput {
+  /** Alt text. */
+  alt: string;
+  /** Image URL. */
+  src: string;
+  /** Optional size specification. */
+  size?: EmbedSize;
+}
+
+/**
+ * Build the stored/rendered HTML for a sized image. Carries `data-cb-img="1"`
+ * plus `data-alt`, `data-src`, `data-size` so the turndown rule can collapse it
+ * back to `![alt](url){spec}` losslessly.
+ */
+export function buildImageHtml({ alt, src, size }: ImageInput): string {
+  const aAlt = escapeAttr(alt);
+  const aSrc = escapeAttr(src);
+  const sizeSpec = size ? sizeSpecToString(size) : "";
+
+  let sizeClass = "";
+  let sizeStyle = "";
+  if (size) {
+    switch (size.type) {
+      case "pixels":
+        sizeClass = "cb-img--size-pixels";
+        sizeStyle = `width: ${size.width}px;`;
+        if (size.height > 0) {
+          sizeStyle += ` height: ${size.height}px;`;
+        }
+        break;
+      case "percent":
+        sizeClass = "cb-img--size-percent";
+        sizeStyle = `width: ${size.width}%;`;
+        break;
+      case "preset":
+        sizeClass = `cb-img--size-${size.size}`;
+        break;
+      case "none":
+        break;
+    }
+  }
+
+  const cls = `cb-img ${sizeClass}`.trim();
+  const styleAttr = sizeStyle ? ` style="${sizeStyle}"` : "";
+  return (
+    `<img class="${cls}" src="${aSrc}" alt="${aAlt}" ` +
+    `data-cb-img="1" data-alt="${aAlt}" data-src="${aSrc}" ` +
+    `data-size="${escapeAttr(sizeSpec)}"${styleAttr} />`
+  );
+}
+
+/** `![alt](url){spec}` — the canonical Markdown representation of a sized image. */
+export function buildImageMarkdown({ alt, src, size }: ImageInput): string {
+  const sizeSpec = size ? sizeSpecToString(size) : "";
+  if (sizeSpec) {
+    return `![${alt}](${src}){${sizeSpec}}`;
+  }
+  return `![${alt}](${src})`;
+}
+
+/**
+ * Matches a Markdown image immediately followed by a `{size}` spec at the start
+ * of the input: `![alt](url){spec}`.
+ */
+const SIZED_IMAGE_RULE = /^!\[([^\]]*)\]\(\s*([^)\s]+)\s*\)\{([^}]+)\}/;
+
+/**
+ * Register the `![alt](url){spec}` inline tokenizer + renderer on a marked
+ * instance. Idempotent per-instance via a private flag. Images without a valid
+ * `{spec}` fall through to marked's default image handling.
+ */
+export function registerImageSizeExtension(marked: {
+  use: (...args: import("marked").MarkedExtension[]) => typeof marked;
+}): void {
+  const flagged = marked as unknown as { __cbImgSize?: boolean };
+  if (flagged.__cbImgSize) return;
+  flagged.__cbImgSize = true;
+
+  marked.use({
+    extensions: [
+      {
+        name: "sizedImage",
+        level: "inline",
+        start(src: string) {
+          const i = src.indexOf("![");
+          return i < 0 ? undefined : i;
+        },
+        tokenizer(src: string) {
+          const m = SIZED_IMAGE_RULE.exec(src);
+          if (!m) return undefined;
+          const alt = m[1] ?? "";
+          const href = m[2] ?? "";
+          const spec = (m[3] ?? "").trim();
+          const size = parseSizeSpec(spec);
+          // Unknown spec -> let the default image tokenizer handle it (the
+          // literal `{spec}` will remain as trailing text).
+          if (size.type === "none") return undefined;
+          return {
+            type: "sizedImage",
+            raw: m[0],
+            alt,
+            href,
+            size,
+          };
+        },
+        renderer(token: import("marked").Tokens.Generic) {
+          const t = token as unknown as { alt: string; href: string; size?: EmbedSize };
+          return buildImageHtml({ alt: t.alt, src: t.href, size: t.size });
+        },
+      },
+    ],
+  });
+}
+
+/**
+ * Add a turndown rule that collapses sized-image HTML back into the
+ * `![alt](url){spec}` tag. Only applies to `<img data-cb-img="1">`; plain
+ * images fall through to turndown's default image handling.
+ */
+export function addImageTurndownRule(turndown: {
+  addRule: (key: string, rule: unknown) => void;
+}): void {
+  turndown.addRule("cbImg", {
+    filter: (node: HTMLElement) =>
+      node.nodeType === 1 &&
+      node.nodeName === "IMG" &&
+      typeof node.getAttribute === "function" &&
+      node.getAttribute("data-cb-img") === "1",
+    replacement: (_content: string, node: HTMLElement) => {
+      const alt = node.getAttribute("data-alt") ?? node.getAttribute("alt") ?? "";
+      const src = node.getAttribute("data-src") ?? node.getAttribute("src") ?? "";
+      const sizeSpec = node.getAttribute("data-size") || "";
+      const size = sizeSpec ? parseSizeSpec(sizeSpec) : { type: "none" as const };
+      return buildImageMarkdown({ alt, src, size });
+    },
+  });
+}
+
 /** Matches a single `@[name size](url)` tag at the start of the input. */
 const ATTACHMENT_RULE = /^@\[([^\]]+)\]\(\s*([^)\s]+)\s*\)/;
 
@@ -535,6 +686,10 @@ const ATTACHMENT_RULE = /^@\[([^\]]+)\]\(\s*([^)\s]+)\s*\)/;
 export function registerEmbedExtension(marked: {
   use: (...args: import("marked").MarkedExtension[]) => typeof marked;
 }): void {
+  // Sized images share the same markdown feature set; register them here so
+  // every embed-enabled marked instance also understands `![alt](url){spec}`.
+  registerImageSizeExtension(marked);
+
   const flagged = marked as unknown as { __cbEmbed?: boolean };
   if (flagged.__cbEmbed) return;
   flagged.__cbEmbed = true;
@@ -603,6 +758,10 @@ export function registerEmbedExtension(marked: {
 export function addEmbedTurndownRule(turndown: {
   addRule: (key: string, rule: unknown) => void;
 }): void {
+  // Sized images belong to the same round-trip system; register their rule so
+  // every embed-enabled turndown instance collapses them back to markdown.
+  addImageTurndownRule(turndown);
+
   turndown.addRule("cbEmbed", {
     filter: (node: HTMLElement) =>
       node.nodeType === 1 &&

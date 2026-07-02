@@ -151,6 +151,36 @@ Or use a preset for quick sizing:
 @[tutorial.mp4 medium](https://example.com/tutorial.mp4)
 ```
 
+## Image Sizing
+
+Standard Markdown images support an optional size spec in trailing braces,
+reusing the same grammar as embeds. Add `{spec}` immediately after the image:
+
+```markdown
+![alt text](https://example.com/photo.png){small}
+```
+
+### Size Specifications
+
+| Format | Example | Result |
+| --- | --- | --- |
+| Preset | `{small}` / `{medium}` / `{large}` | 320px / 640px / 960px max-width |
+| Pixel dimensions | `{640x360}` | Fixed width × height in pixels |
+| Percentage width | `{50%}` | Width relative to the article body |
+| Named width | `{width=250}` | Fixed width, auto height |
+| Named width + height | `{width=250 height=300}` | Fixed width and height |
+
+```markdown
+![Diagram](https://example.com/diagram.png){medium}
+![Screenshot](https://example.com/shot.png){640x360}
+![Logo](https://example.com/logo.png){50%}
+![Thumbnail](https://example.com/thumb.png){width=250 height=300}
+```
+
+Images without a `{spec}` render at their natural size (capped to the article
+width), exactly as in standard Markdown. Size information round-trips losslessly
+between the rich text and Markdown editor modes.
+
 ## Screenshots
 
 ### Blog Home Page

@@ -10,6 +10,10 @@ import {
   buildEmbedMarkdown,
   registerEmbedExtension,
   addEmbedTurndownRule,
+  buildImageHtml,
+  buildImageMarkdown,
+  registerImageSizeExtension,
+  addImageTurndownRule,
   parseSizeSpec,
   sizeSpecToString,
   type EmbedSize,
@@ -287,5 +291,129 @@ describe("Embed Markdown Round-Trip", () => {
     expect(roundTripped).toMatch(/[*_]italic[*_]/);
     expect(roundTripped).toContain("List item 1");
     expect(roundTripped).toContain("[Example]");
+  });
+});
+
+describe("Sized Image Builders", () => {
+  it("buildImageMarkdown should emit preset spec", () => {
+    const md = buildImageMarkdown({
+      alt: "photo",
+      src: "http://example.com/p.png",
+      size: { type: "preset", size: "small" },
+    });
+    expect(md).toBe("![photo](http://example.com/p.png){small}");
+  });
+
+  it("buildImageMarkdown should emit WxH spec", () => {
+    const md = buildImageMarkdown({
+      alt: "photo",
+      src: "http://example.com/p.png",
+      size: { type: "pixels", width: 250, height: 300 },
+    });
+    expect(md).toBe("![photo](http://example.com/p.png){250x300}");
+  });
+
+  it("buildImageMarkdown should emit width= spec when no height", () => {
+    const md = buildImageMarkdown({
+      alt: "photo",
+      src: "http://example.com/p.png",
+      size: { type: "pixels", width: 250, height: 0 },
+    });
+    expect(md).toBe("![photo](http://example.com/p.png){width=250}");
+  });
+
+  it("buildImageMarkdown should omit braces when size is none", () => {
+    const md = buildImageMarkdown({
+      alt: "photo",
+      src: "http://example.com/p.png",
+      size: { type: "none" },
+    });
+    expect(md).toBe("![photo](http://example.com/p.png)");
+  });
+
+  it("buildImageHtml should carry data attributes for round-trip", () => {
+    const html = buildImageHtml({
+      alt: "photo",
+      src: "http://example.com/p.png",
+      size: { type: "preset", size: "small" },
+    });
+    expect(html).toContain('data-cb-img="1"');
+    expect(html).toContain('data-size="small"');
+    expect(html).toContain("cb-img--size-small");
+  });
+
+  it("buildImageHtml should inline pixel width/height", () => {
+    const html = buildImageHtml({
+      alt: "photo",
+      src: "http://example.com/p.png",
+      size: { type: "pixels", width: 250, height: 300 },
+    });
+    expect(html).toContain("width: 250px;");
+    expect(html).toContain("height: 300px;");
+  });
+});
+
+describe("Sized Image Markdown Round-Trip", () => {
+  let turndown: TurndownService;
+
+  beforeAll(() => {
+    registerImageSizeExtension(marked);
+  });
+
+  beforeEach(() => {
+    turndown = new TurndownService({
+      headingStyle: "atx",
+      codeBlockStyle: "fenced",
+    });
+    addImageTurndownRule(turndown);
+  });
+
+  const sizedImageCases = [
+    { name: "small preset", markdown: "![alt text](http://example.com/photo.png){small}" },
+    { name: "medium preset", markdown: "![alt text](http://example.com/photo.png){medium}" },
+    { name: "large preset", markdown: "![alt text](http://example.com/photo.png){large}" },
+    { name: "WxH pixels", markdown: "![alt text](http://example.com/photo.png){640x360}" },
+    { name: "width= named", markdown: "![alt text](http://example.com/photo.png){width=250}" },
+    {
+      name: "width+height named (normalizes to WxH)",
+      markdown: "![alt text](http://example.com/photo.png){width=250 height=300}",
+      expected: "![alt text](http://example.com/photo.png){250x300}",
+    },
+    { name: "percentage", markdown: "![alt text](http://example.com/photo.png){50%}" },
+  ];
+
+  sizedImageCases.forEach(({ name, markdown, expected }) => {
+    it(`should round-trip ${name}`, () => {
+      const html = marked.parse(markdown) as string;
+      expect(html).toContain("data-cb-img");
+      expect(html).toContain("data-size");
+
+      const roundTripped = turndown.turndown(html).trim();
+      expect(roundTripped).toBe(expected ?? markdown);
+    });
+  });
+
+  it("should leave plain images (no spec) untouched by the sized rule", () => {
+    const markdown = "![alt text](http://example.com/photo.png)";
+    const html = marked.parse(markdown) as string;
+    expect(html).not.toContain("data-cb-img");
+    const roundTripped = turndown.turndown(html).trim();
+    expect(roundTripped).toBe(markdown);
+  });
+
+  it("should treat an unknown spec as a plain image with trailing text", () => {
+    const markdown = "![alt](http://example.com/p.png){nonsense}";
+    const html = marked.parse(markdown) as string;
+    // Falls through to default image handling; no sized-image data attrs.
+    expect(html).not.toContain("data-cb-img");
+    expect(html).toContain("{nonsense}");
+  });
+
+  it("should handle a sized image inside a paragraph with surrounding text", () => {
+    const markdown = "Here is a photo ![alt](http://example.com/p.png){small} inline.";
+    const html = marked.parse(markdown) as string;
+    expect(html).toContain("data-cb-img");
+    const roundTripped = turndown.turndown(html).trim();
+    expect(roundTripped).toContain("![alt](http://example.com/p.png){small}");
   });
 });
