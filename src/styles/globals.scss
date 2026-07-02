@@ -70,6 +70,19 @@ body {
 .article-body code {
   font-family: var(--cb-font-mono);
 }
+// Inline code (single-backtick `code`, i.e. <code> outside a <pre>): a subtle
+// rounded chip with a noticeably darkened font. `color-mix` darkens the theme
+// foreground toward black so it dims consistently in every theme (dimmer green
+// on hacker, near-black on the light themes). Block code inside <pre> is
+// excluded so syntax highlighting is untouched.
+.article-body :not(pre) > code {
+  color: color-mix(in srgb, rgb(var(--cb-fg)), #000 28%);
+  background: rgb(var(--cb-muted) / 0.16);
+  border: 1px solid rgb(var(--cb-border) / 0.7);
+  border-radius: 0.35rem;
+  padding: 0.1em 0.38em;
+  font-size: 0.9em;
+}
 .article-body blockquote {
   border-left: 3px solid rgb(var(--cb-accent));
   padding-left: 1rem;
@@ -190,6 +203,19 @@ body {
   }
   .cb-code--size-large {
     max-width: 900px;
+  }
+
+  // Medium-sized blocks wrap long lines to the next line instead of showing a
+  // horizontal scrollbar. Applies in every state (default, collapsed preview,
+  // and expanded); vertical scrolling still handles the collapsed height.
+  .cb-code--size-medium .cb-code__pre,
+  .cb-code--size-medium .cb-code__pre code {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .cb-code--size-medium .cb-code__pre {
+    overflow-x: hidden;
   }
 }
 
