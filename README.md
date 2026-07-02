@@ -124,6 +124,55 @@ Control the display size of embeds by adding size parameters after the filename:
 - **Slides:** ppt, pptx, odp
 - **Archives:** zip, rar, 7z, tar, gz
 
+### External Link Embeds
+
+Embed external URLs with rich provider embeds or generic link previews using the `@[](url)` syntax:
+
+```markdown
+@[](https://www.youtube.com/watch?v=Z_UOmAed5O8)
+@[](https://soundcloud.com/artist/track)
+@[](https://example.com/some-post)
+```
+
+#### Supported Providers
+
+Rich embeds are automatically rendered for these platforms:
+
+- **YouTube / YouTube Music** – video player
+- **Vimeo** – video player
+- **Rumble** – video player
+- **Twitch** – video player (clips, VODs, channels)
+- **X (Twitter)** – tweet embed
+- **Facebook** – post/video embed
+- **Instagram** – post/reel embed
+- **SoundCloud** – audio player
+
+#### Generic Link Previews
+
+For unrecognized URLs, a link-preview card is displayed with:
+
+- Open Graph / Twitter Card metadata (title, description, thumbnail)
+- Site name and hostname
+- "Visit site" button
+
+#### Plain Links (urlOnly)
+
+Suppress the preview and render a plain link:
+
+```markdown
+@[urlOnly](https://example.com/some-post)
+```
+
+#### Size Control
+
+Apply the same size specifications as file embeds:
+
+```markdown
+@[640x360](https://www.youtube.com/watch?v=abc)
+@[50%](https://soundcloud.com/artist/track)
+@[medium](https://example.com/post)
+```
+
 ### Editor Integration
 
 The WYSIWYG editor supports both rich text and markdown modes:

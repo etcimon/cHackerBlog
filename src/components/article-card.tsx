@@ -239,7 +239,7 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
       {bodyHtml !== undefined && (
         <div
           ref={articleBodyRef}
-          className={`article-body overflow-hidden text-lg text-fg/90${open ? " animate-expand" : ""}`}
+          className={`article-body article-rendered overflow-hidden text-lg text-fg/90${open ? " animate-expand" : ""}`}
           dangerouslySetInnerHTML={{ __html: bodyHtml }}
         />
       )}
