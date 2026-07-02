@@ -27,6 +27,7 @@ import {
   wireCodeBlockToggles,
   type CodeToggleOptions,
 } from "@/lib/highlight";
+import { hydrateLinkEmbeds } from "@/lib/link-embeds";
 
 // useLayoutEffect on the server logs a warning; fall back to useEffect there.
 const useIsoLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
@@ -85,6 +86,7 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
   useIsoLayoutEffect(() => {
     if (bodyHtml !== undefined && articleBodyRef.current) {
       wireCodeBlockToggles(articleBodyRef.current, codeToggleOptions);
+      hydrateLinkEmbeds(articleBodyRef.current);
     }
   }, [bodyHtml, codeToggleOptions]);
 

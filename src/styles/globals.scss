@@ -366,6 +366,149 @@ body {
   font-weight: 600;
 }
 
+// --- URL embeds (rich providers + generic link preview) --------------------
+// Rich provider embeds: a responsive frame whose height follows the shape's
+// aspect ratio (video 16:9, post ~ portrait, audio a fixed player height).
+.article-body .cb-embed--url {
+  margin: 1.25em 0;
+}
+.article-body .cb-embed--rich {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.article-body .cb-embed__frame {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 0.625rem;
+  border: 1px solid rgb(var(--cb-border));
+  background: rgb(var(--cb-card));
+}
+.article-body .cb-embed__frame--video {
+  aspect-ratio: 16 / 9;
+}
+.article-body .cb-embed__frame--post {
+  aspect-ratio: 3 / 4;
+}
+.article-body .cb-embed__frame--audio {
+  height: 166px;
+}
+// The iframe/blockquote fills its frame.
+.article-body .cb-embed__frame-el,
+.article-body .cb-embed__frame iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+.article-body .cb-embed__frame .twitter-tweet {
+  position: relative;
+  margin: 0 auto;
+}
+.article-body .cb-embed__caption a {
+  color: rgb(var(--cb-muted));
+  text-decoration: none;
+}
+.article-body .cb-embed__caption a:hover {
+  color: rgb(var(--cb-accent));
+}
+
+// Generic link-preview card: thumbnail + meta + Visit-site button.
+.article-body .cb-embed--link {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid rgb(var(--cb-border));
+  border-radius: 0.625rem;
+  background: rgb(var(--cb-card));
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.article-body .cb-embed--link:hover {
+  border-color: rgb(var(--cb-accent) / 0.6);
+}
+.article-body .cb-embed__link {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.75rem 0.875rem;
+  text-decoration: none;
+  color: inherit;
+}
+.article-body .cb-embed__thumb {
+  flex: 0 0 auto;
+  width: 96px;
+  height: 96px;
+  border-radius: 0.5rem;
+  object-fit: cover;
+  background: rgb(var(--cb-accent) / 0.08);
+}
+.article-body .cb-embed__thumb--empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgb(var(--cb-accent));
+}
+.article-body .cb-embed__thumb--empty svg {
+  width: 2rem;
+  height: 2rem;
+}
+.article-body .cb-embed--link .cb-embed__meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 0.15rem;
+}
+.article-body .cb-embed__site {
+  color: rgb(var(--cb-muted));
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.article-body .cb-embed__title {
+  color: rgb(var(--cb-fg));
+  font-weight: 600;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.article-body .cb-embed__desc {
+  color: rgb(var(--cb-fg) / 0.8);
+  font-size: 0.875rem;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.article-body .cb-embed__url {
+  color: rgb(var(--cb-muted));
+  font-size: 0.75rem;
+}
+.article-body .cb-embed__visit {
+  align-self: center;
+  margin: 0 0.75rem;
+  white-space: nowrap;
+}
+
+// Plain link (urlOnly): render inline-ish as an accent-colored anchor.
+.article-body a.cb-embed--urlonly {
+  display: inline-block;
+  margin: 0.25em 0;
+  color: rgb(var(--cb-accent));
+  word-break: break-all;
+}
+
 // On narrow screens, let the file card wrap its download button to a new line.
 @media (max-width: 480px) {
   .article-body .cb-embed--file {
@@ -373,6 +516,16 @@ body {
   }
   .article-body .cb-embed__btn {
     margin-left: auto;
+  }
+  .article-body .cb-embed--link {
+    flex-direction: column;
+  }
+  .article-body .cb-embed__thumb {
+    width: 100%;
+    height: 160px;
+  }
+  .article-body .cb-embed__visit {
+    margin: 0 0.875rem 0.875rem;
   }
 }
 

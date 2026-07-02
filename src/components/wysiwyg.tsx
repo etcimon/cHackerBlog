@@ -21,6 +21,7 @@ import {
   Eye,
   EyeOff,
   SeparatorHorizontal,
+  Globe,
 } from "lucide-react";
 import { api, ApiClientError } from "@/lib/api-client";
 import { useToast } from "@/components/toast";
@@ -31,14 +32,18 @@ import {
   FILE_ACCEPT,
   buildEmbedHtml,
   buildEmbedMarkdown,
+  buildUrlEmbedHtml,
+  buildUrlEmbedMarkdown,
   buildPreviewEndHtml,
   PREVIEW_END_MARKER,
   registerEmbedExtension,
   addEmbedTurndownRule,
   parseSizeSpec,
   sizeSpecToString,
+  isExternalHttpUrl,
   type EmbedSize,
 } from "@/lib/embeds";
+import { hydrateLinkEmbeds } from "@/lib/link-embeds";
 import {
   initHighlightJs,
   loadHighlightJsCss,
@@ -366,6 +371,7 @@ export function Wysiwyg({ value, onChange }: Props) {
     }
     if (mode === "rich" && ref.current) {
       wireCodeBlockToggles(ref.current, codeToggleOptions);
+      hydrateLinkEmbeds(ref.current);
     }
   }, [value, mode, codeToggleOptions]);
 
@@ -423,6 +429,7 @@ export function Wysiwyg({ value, onChange }: Props) {
   useEffect(() => {
     if (mode === "md" && previewRef.current) {
       wireCodeBlockToggles(previewRef.current, codeToggleOptions);
+      hydrateLinkEmbeds(previewRef.current);
     }
   }, [mode, md, hljsReady, codeToggleOptions]);
 
@@ -462,6 +469,7 @@ export function Wysiwyg({ value, onChange }: Props) {
       if (ref.current) {
         ref.current.innerHTML = html;
         wireCodeBlockToggles(ref.current, codeToggleOptions);
+        hydrateLinkEmbeds(ref.current);
         ref.current.focus();
         placeRichCaretAtBlock(ref.current, caretIdx);
       }
@@ -523,6 +531,24 @@ export function Wysiwyg({ value, onChange }: Props) {
   const handleInput = useCallback(() => {
     if (ref.current) onChange(ref.current.innerHTML);
   }, [onChange]);
+
+  // Insert an external URL embed (rich provider embed or generic link preview).
+  // Works in both modes; rich mode also hydrates the freshly inserted card.
+  const handleInsertLinkEmbed = useCallback(() => {
+    const raw = prompt("Embed URL (YouTube, SoundCloud, Vimeo, X, …)");
+    if (!raw) return;
+    const url = raw.trim();
+    if (!isExternalHttpUrl(url)) {
+      toast.error("Enter a full http(s) URL");
+      return;
+    }
+    if (mode === "rich") {
+      insertHtml(buildUrlEmbedHtml({ url }));
+      requestAnimationFrame(() => hydrateLinkEmbeds(ref.current));
+    } else {
+      setMd((prev) => `${prev}\n\n${buildUrlEmbedMarkdown({ url })}\n\n`);
+    }
+  }, [insertHtml, mode, toast]);
 
   const handleUpload = useCallback(
     async (file: File) => {
@@ -632,6 +658,9 @@ export function Wysiwyg({ value, onChange }: Props) {
         <div className="flex items-center gap-1">
           <Btn title="Insert preview separator (--END PREVIEW--)" onClick={insertPreviewSeparator}>
             <SeparatorHorizontal className="h-4 w-4" />
+          </Btn>
+          <Btn title="Embed link (YouTube, SoundCloud, Vimeo, X…)" onClick={handleInsertLinkEmbed}>
+            <Globe className="h-4 w-4" />
           </Btn>
           <Btn title="Insert image" onClick={() => fileRef.current?.click()}>
             <ImageIcon className="h-4 w-4" />

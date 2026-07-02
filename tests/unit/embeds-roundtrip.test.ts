@@ -8,6 +8,10 @@ import TurndownService from "turndown";
 import {
   buildEmbedHtml,
   buildEmbedMarkdown,
+  buildUrlEmbedHtml,
+  buildUrlEmbedMarkdown,
+  parseUrlBracket,
+  shouldTreatAsUrlEmbed,
   registerEmbedExtension,
   addEmbedTurndownRule,
   buildImageHtml,
@@ -23,6 +27,7 @@ import {
   sizeSpecToString,
   type EmbedSize,
 } from "@/lib/embeds";
+import { buildProviderEmbed, detectProvider } from "@/lib/ext-embeds";
 
 describe("Size Specification Parser", () => {
   it("should parse pixel dimensions (WxH)", () => {
@@ -517,5 +522,158 @@ describe("Preview Separator Markdown Round-Trip", () => {
     expect(html).not.toContain("data-preview-end");
     const md = turndown.turndown(html).trim();
     expect(md).not.toContain("--END PREVIEW--");
+  });
+});
+
+/* ----------------------------- URL embeds -------------------------------- */
+// The two canonical fixtures requested for verification.
+const SOUNDCLOUD_URL =
+  "https://soundcloud.com/elaina-hannah/overwerk-virtue?si=957df22c7ab74dd2a3412cfc5675be41&utm_source=clipboard&utm_medium=text&utm_campaign=social_sharing";
+const YOUTUBE_URL = "https://www.youtube.com/watch?v=Z_UOmAed5O8";
+
+describe("URL Embed Detection", () => {
+  it("treats external pages as URL embeds", () => {
+    expect(shouldTreatAsUrlEmbed(YOUTUBE_URL)).toBe(true);
+    expect(shouldTreatAsUrlEmbed(SOUNDCLOUD_URL)).toBe(true);
+    expect(shouldTreatAsUrlEmbed("https://example.com/some-post")).toBe(true);
+  });
+
+  it("leaves local uploads and direct file links as file embeds", () => {
+    expect(shouldTreatAsUrlEmbed("/api/uploads/1234-file.pdf")).toBe(false);
+    expect(shouldTreatAsUrlEmbed("https://cdn.example.com/clip.mp4")).toBe(false);
+    expect(shouldTreatAsUrlEmbed("https://cdn.example.com/photo.jpg")).toBe(false);
+  });
+
+  it("detects providers by host", () => {
+    expect(detectProvider(YOUTUBE_URL)).toBe("youtube");
+    expect(detectProvider(SOUNDCLOUD_URL)).toBe("soundcloud");
+    expect(detectProvider("https://music.youtube.com/watch?v=abc")).toBe("youtubemusic");
+    expect(detectProvider("https://example.com/x")).toBeNull();
+  });
+});
+
+describe("URL Embed Bracket Parser", () => {
+  it("parses an empty bracket", () => {
+    expect(parseUrlBracket("")).toEqual({ size: { type: "none" }, urlOnly: false });
+  });
+  it("parses a size spec", () => {
+    expect(parseUrlBracket("640x360")).toEqual({
+      size: { type: "pixels", width: 640, height: 360 },
+      urlOnly: false,
+    });
+  });
+  it("parses the urlOnly keyword (case-insensitive)", () => {
+    expect(parseUrlBracket("urlOnly")).toEqual({ size: { type: "none" }, urlOnly: true });
+    expect(parseUrlBracket("URLONLY")).toEqual({ size: { type: "none" }, urlOnly: true });
+  });
+  it("parses size + urlOnly together", () => {
+    expect(parseUrlBracket("50% urlOnly")).toEqual({
+      size: { type: "percent", width: 50 },
+      urlOnly: true,
+    });
+  });
+});
+
+describe("Provider Embed Generation", () => {
+  it("builds a YouTube iframe from the video id", () => {
+    const frame = buildProviderEmbed(YOUTUBE_URL);
+    expect(frame?.provider).toBe("youtube");
+    expect(frame?.shape).toBe("video");
+    expect(frame?.html).toContain("https://www.youtube.com/embed/Z_UOmAed5O8");
+  });
+
+  it("builds a SoundCloud player from the track permalink", () => {
+    const frame = buildProviderEmbed(SOUNDCLOUD_URL);
+    expect(frame?.provider).toBe("soundcloud");
+    expect(frame?.shape).toBe("audio");
+    expect(frame?.html).toContain("https://w.soundcloud.com/player/?url=");
+    // The permalink is encoded and the tracking query stripped from the player.
+    expect(frame?.html).toContain(
+      encodeURIComponent("https://soundcloud.com/elaina-hannah/overwerk-virtue"),
+    );
+    expect(frame?.html).not.toContain("utm_source");
+  });
+});
+
+describe("URL Embed Round-Trip", () => {
+  let turndown: TurndownService;
+
+  beforeAll(() => {
+    registerEmbedExtension(marked);
+  });
+
+  beforeEach(() => {
+    turndown = new TurndownService({ headingStyle: "atx", codeBlockStyle: "fenced" });
+    addEmbedTurndownRule(turndown);
+  });
+
+  const cases = [
+    { name: "YouTube (default rich embed)", markdown: `@[](${YOUTUBE_URL})` },
+    { name: "SoundCloud (default rich embed)", markdown: `@[](${SOUNDCLOUD_URL})` },
+    { name: "YouTube short link", markdown: "@[](https://youtu.be/Z_UOmAed5O8)" },
+    { name: "Sized YouTube embed", markdown: "@[640x360](https://youtu.be/Z_UOmAed5O8)" },
+    { name: "Percent-sized SoundCloud", markdown: `@[50%](${SOUNDCLOUD_URL})` },
+    { name: "Generic page (preview fallback)", markdown: "@[](https://example.com/some-post)" },
+    { name: "urlOnly plain link", markdown: "@[urlOnly](https://example.com/some-post)" },
+    { name: "Sized + urlOnly", markdown: "@[50% urlOnly](https://example.com/some-post)" },
+  ];
+
+  cases.forEach(({ name, markdown }) => {
+    it(`round-trips ${name}`, () => {
+      const html = marked.parse(markdown) as string;
+      expect(html).toContain('data-embed-type="url"');
+      const roundTripped = turndown.turndown(html);
+      expect(roundTripped.trim()).toBe(markdown);
+    });
+  });
+
+  it("renders a YouTube rich embed with the player iframe", () => {
+    const html = marked.parse(`@[](${YOUTUBE_URL})`) as string;
+    expect(html).toContain('data-provider="youtube"');
+    expect(html).toContain("https://www.youtube.com/embed/Z_UOmAed5O8");
+    expect(html).toContain('data-shape="video"');
+  });
+
+  it("renders a SoundCloud rich embed with the player iframe", () => {
+    const html = marked.parse(`@[](${SOUNDCLOUD_URL})`) as string;
+    expect(html).toContain('data-provider="soundcloud"');
+    expect(html).toContain("https://w.soundcloud.com/player/?url=");
+    expect(html).toContain('data-shape="audio"');
+    // The full original URL (with tracking params) is preserved for round-trip.
+    expect(html).toContain("utm_campaign=social_sharing");
+  });
+
+  it("renders a generic page as a link-preview card with a Visit-site button", () => {
+    const html = marked.parse("@[](https://example.com/some-post)") as string;
+    expect(html).toContain("cb-embed--link");
+    expect(html).toContain('data-link-hydrate="1"');
+    expect(html).toContain("Visit site");
+    expect(html).toContain("example.com");
+  });
+
+  it("renders urlOnly as a plain anchor without a preview", () => {
+    const html = marked.parse("@[urlOnly](https://example.com/some-post)") as string;
+    expect(html).toContain("cb-embed--urlonly");
+    expect(html).toContain('data-url-only="1"');
+    expect(html).not.toContain("cb-embed__frame");
+    expect(html).not.toContain("Visit site");
+  });
+
+  it("keeps file/media embeds unaffected by URL-embed detection", () => {
+    const markdown = "@[video.mp4](https://cdn.example.com/video.mp4)";
+    const html = marked.parse(markdown) as string;
+    expect(html).not.toContain('data-embed-type="url"');
+    expect(html).toContain("data-embed");
+    const roundTripped = turndown.turndown(html);
+    expect(roundTripped.trim()).toBe(markdown);
+  });
+
+  it("keeps the WYSIWYG-built HTML and markdown preview consistent (same builder)", () => {
+    // The editor inserts buildUrlEmbedHtml output directly in rich mode; the
+    // markdown preview renders buildUrlEmbedMarkdown through marked. Both must
+    // yield identical HTML so the two surfaces stay visually consistent.
+    const fromBuilder = buildUrlEmbedHtml({ url: YOUTUBE_URL });
+    const fromMarkdown = marked.parse(buildUrlEmbedMarkdown({ url: YOUTUBE_URL })) as string;
+    expect(fromMarkdown).toContain(fromBuilder);
   });
 });
