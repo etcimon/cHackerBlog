@@ -105,7 +105,7 @@ export default async function ArticlePage({ params }: Params) {
 
       <Feed
         initialPage={{ items: located.items, nextCursor: located.nextCursor }}
-        tags={tags.map((t) => ({ name: t.name, slug: t.slug }))}
+        tags={tags}
         prefetchPages={env.FEED_PREFETCH_PAGES}
         expandedCount={env.FEED_EXPANDED_COUNT}
         expandAll={env.FEED_EXPAND_ALL}
