@@ -13,7 +13,7 @@
 import type { Metadata } from "next";
 import { redirect, notFound } from "next/navigation";
 import { getSettings } from "@/lib/settings";
-import { listAllTags } from "@/lib/articles";
+import { listAllTags, getTotalArticleCount } from "@/lib/articles";
 import { locateArticleForFirstLoad } from "@/lib/feed-locator";
 import { getPrisma } from "@/lib/prisma";
 import { isAdmin } from "@/lib/auth";
@@ -82,7 +82,10 @@ export default async function ArticlePage({ params }: Params) {
     throw err;
   }
 
-  const tags = await listAllTags();
+  const [tags, totalCount] = await Promise.all([
+    listAllTags(),
+    getTotalArticleCount(admin),
+  ]);
 
   return (
     <main className="mx-auto max-w-5xl px-4">
@@ -106,6 +109,7 @@ export default async function ArticlePage({ params }: Params) {
       <Feed
         initialPage={{ items: located.items, nextCursor: located.nextCursor }}
         tags={tags}
+        totalCount={totalCount}
         prefetchPages={env.FEED_PREFETCH_PAGES}
         expandedCount={env.FEED_EXPANDED_COUNT}
         expandAll={env.FEED_EXPAND_ALL}

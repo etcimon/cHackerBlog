@@ -20,6 +20,7 @@ import { useAdmin } from "@/components/admin-context";
 interface Props {
   initialPage: FeedPage;
   tags: TagItem[];
+  totalCount: number;
   prefetchPages: number;
   /** How many leading articles render fully expanded (FEED_EXPANDED_COUNT). */
   expandedCount: number;
@@ -36,6 +37,7 @@ interface Props {
 export function Feed({
   initialPage,
   tags,
+  totalCount,
   prefetchPages,
   expandedCount,
   expandAll,
@@ -52,12 +54,12 @@ export function Feed({
   const [creating, setCreating] = useState(false);
   const [allTags, setAllTags] = useState<TagItem[]>(tags);
   const [initialLoaded, setInitialLoaded] = useState(false);
-  const [visibleIndex, setVisibleIndex] = useState(0);
+  const [loadedAnchors, setLoadedAnchors] = useState<Set<string>>(new Set());
+  const [nextAnchorIndex, setNextAnchorIndex] = useState(0);
 
   const sentinelRef = useRef<HTMLDivElement>(null);
   const loadingRef = useRef(false);
   const scrolledRef = useRef(false);
-  const articleRefs = useRef<Map<string, HTMLElement>>(new Map());
 
   const fetchPage = useCallback(
     async (opts: { cursor?: string | null; tag?: string | null; reset?: boolean }) => {
@@ -72,6 +74,12 @@ export function Feed({
         const page = await api.get<FeedPage>(`/api/feed?${params.toString()}`);
         setItems((prev) => (opts.reset ? page.items : [...prev, ...page.items]));
         setCursor(page.nextCursor);
+        // Update loaded anchors
+        setLoadedAnchors((prev) => {
+          const newSet = opts.reset ? new Set<string>() : new Set(prev);
+          page.items.forEach((item) => newSet.add(`${item.slug}-top`));
+          return newSet;
+        });
         return page;
       } finally {
         loadingRef.current = false;
@@ -87,6 +95,8 @@ export function Feed({
       setActiveTag(slug);
       setItems([]);
       setCursor(null);
+      setLoadedAnchors(new Set());
+      setNextAnchorIndex(0);
       void fetchPage({ tag: slug, reset: true });
     },
     [fetchPage],
@@ -180,38 +190,6 @@ export function Feed({
     return () => observer.disconnect();
   }, [cursor, activeTag, prefetchPages, fetchPage]);
 
-  // Track which article is currently visible to hide/show the next button
-  useEffect(() => {
-    const handleScroll = () => {
-      let bestIndex = -1;
-      let maxOverlap = 0;
-
-      items.forEach((item, idx) => {
-        const el = articleRefs.current.get(item.slug);
-        if (!el) return;
-        const rect = el.getBoundingClientRect();
-        const viewportHeight = window.innerHeight;
-
-        const top = Math.max(0, rect.top);
-        const bottom = Math.min(viewportHeight, rect.bottom);
-        const overlap = Math.max(0, bottom - top);
-
-        if (overlap > maxOverlap) {
-          maxOverlap = overlap;
-          bestIndex = idx;
-        }
-      });
-
-      if (bestIndex !== -1) {
-        setVisibleIndex(bestIndex);
-      }
-    };
-
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    handleScroll(); // Initial check
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, [items]);
-
   const handleSaved = useCallback(async () => {
     const editingSlug = editing?.slug;
     setEditing(null);
@@ -251,46 +229,20 @@ export function Feed({
   }, [activeTag, editing?.slug, fetchPage]);
 
   const handleNextPost = useCallback(() => {
-    // Find the article that is currently most visible (largest overlap with viewport)
-    let bestIndex = -1;
-    let maxOverlap = 0;
-
-    items.forEach((item, idx) => {
-      const el = articleRefs.current.get(item.slug);
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      const viewportHeight = window.innerHeight;
-
-      // Calculate overlap: how much of the article is visible in the viewport
-      const top = Math.max(0, rect.top);
-      const bottom = Math.min(viewportHeight, rect.bottom);
-      const overlap = Math.max(0, bottom - top);
-
-      if (overlap > maxOverlap) {
-        maxOverlap = overlap;
-        bestIndex = idx;
-      }
-    });
-
-    // If no article is found, default to the first one
-    if (bestIndex === -1) bestIndex = 0;
-
-    // Scroll to the next article
-    const nextIndex = bestIndex + 1;
-    if (nextIndex < items.length) {
-      const nextSlug = items[nextIndex].slug;
-      const nextEl = articleRefs.current.get(nextSlug);
-      if (nextEl) {
-        nextEl.scrollIntoView({ behavior: "smooth", block: "start" });
+    const anchors = Array.from(loadedAnchors);
+    
+    if (nextAnchorIndex < anchors.length) {
+      const nextAnchor = anchors[nextAnchorIndex];
+      const el = document.getElementById(nextAnchor);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+        setNextAnchorIndex(nextAnchorIndex + 1);
       }
     }
-  }, [items]);
+  }, [loadedAnchors, nextAnchorIndex]);
 
-  // Show next button only if there are more items loaded and we're not at the last article
-  const showNextButton = items.length > 1 && visibleIndex < items.length - 1;
-
-  // Calculate total published article count for the "All" tag
-  const totalCount = allTags.reduce((sum, tag) => sum + (tag.count || 0), 0);
+  // Show next button if there's a next anchor available at the current index
+  const showNextButton = nextAnchorIndex < loadedAnchors.size;
 
   return (
     <>
@@ -298,23 +250,16 @@ export function Feed({
 
       <div>
         {items.map((item, idx) => (
-          <div
+          <ArticleCard
             key={item.id}
-            ref={(el) => {
-              if (el) articleRefs.current.set(item.slug, el);
-              else articleRefs.current.delete(item.slug);
-            }}
-          >
-            <ArticleCard
-              item={item}
-              expanded={
-                expandAll ||
-                item.slug === initialTargetSlug ||
-                (idx < expandedCount && activeTag === null)
-              }
-              onEdit={setEditing}
-            />
-          </div>
+            item={item}
+            expanded={
+              expandAll ||
+              item.slug === initialTargetSlug ||
+              (idx < expandedCount && activeTag === null)
+            }
+            onEdit={setEditing}
+          />
         ))}
       </div>
 

@@ -6,7 +6,7 @@
  */
 import { redirect } from "next/navigation";
 import { getSettings } from "@/lib/settings";
-import { getFeed, listAllTags } from "@/lib/articles";
+import { getFeed, listAllTags, getTotalArticleCount } from "@/lib/articles";
 import { env } from "@/lib/env";
 import { Feed } from "@/components/feed";
 
@@ -16,7 +16,11 @@ export default async function HomePage() {
   const settings = await getSettings();
   if (!settings.setupComplete) redirect("/setup");
 
-  const [initialPage, tags] = await Promise.all([getFeed({}), listAllTags()]);
+  const [initialPage, tags, totalCount] = await Promise.all([
+    getFeed({}),
+    listAllTags(),
+    getTotalArticleCount(),
+  ]);
 
   return (
     <main className="mx-auto max-w-5xl px-4">
@@ -56,6 +60,7 @@ export default async function HomePage() {
       <Feed
         initialPage={initialPage}
         tags={tags}
+        totalCount={totalCount}
         prefetchPages={env.FEED_PREFETCH_PAGES}
         expandedCount={env.FEED_EXPANDED_COUNT}
         expandAll={env.FEED_EXPAND_ALL}

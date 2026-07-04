@@ -104,7 +104,13 @@ export function ArticleEditor({ article, allTags, onClose, onSaved }: Props) {
     setSubmitting(true);
     try {
       if (isEdit && article) {
-        await api.put(`/api/articles/${article.id}`, values);
+        const result = await api.put<{ deleted?: boolean }>(`/api/articles/${article.id}`, values);
+        if (result.deleted) {
+          toast.success("Article deleted (empty content)");
+          reset();
+          onSaved();
+          return;
+        }
         toast.success("Article updated");
       } else {
         await api.post("/api/articles", values);

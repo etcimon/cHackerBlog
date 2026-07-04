@@ -43,6 +43,12 @@ export const PUT = handler<Ctx>(async (req, { params }) => {
   // Full article update
   const input = articleInputSchema.parse(json);
   const article = await updateArticle(id, input);
+  
+  // If article was deleted (empty content), return deleted flag
+  if (article === null) {
+    return ok({ deleted: true });
+  }
+  
   return ok({ id: article.id, slug: article.slug });
 });
 

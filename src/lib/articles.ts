@@ -274,6 +274,18 @@ export async function createArticle(input: ArticleInput) {
 
 export async function updateArticle(id: string, input: ArticleInput) {
   const prisma = getPrisma();
+
+  // If content is empty or effectively empty (only HTML tags with no text), delete the article
+  const isEmptyContent = !input.content || 
+    input.content.trim() === "" ||
+    // Strip HTML tags and check if remaining text is empty
+    input.content.replace(/<[^>]*>/g, "").trim() === "";
+
+  if (isEmptyContent) {
+    await deleteArticle(id);
+    return null;
+  }
+
   const tagConnect = await connectTags(input.tags);
 
   // Get current article to disconnect existing tags
@@ -356,6 +368,13 @@ export async function listAllTags() {
     },
   });
   return tags.map((t) => ({ name: t.name, slug: t.slug, count: t._count.articles }));
+}
+
+export async function getTotalArticleCount(includeUnpublished = false) {
+  const prisma = getPrisma();
+  return prisma.article.count({
+    where: includeUnpublished ? undefined : { published: true },
+  });
 }
 
 export async function deleteTag(slug: string) {
