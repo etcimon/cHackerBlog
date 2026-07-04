@@ -148,6 +148,13 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
       const data = await api.get<{ content: string }>(url);
       setContent(data.content);
       setOpen(true);
+      // Scroll to the article's top anchor after content loads
+      setTimeout(() => {
+        const anchor = document.getElementById(`${item.slug}-top`);
+        if (anchor) {
+          anchor.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      }, 100);
     } catch (err) {
       toast.error(err instanceof ApiClientError ? err.message : "Failed to load article");
     } finally {
