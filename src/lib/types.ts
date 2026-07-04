@@ -52,6 +52,7 @@ export interface PublicSettings {
 export interface TagItem {
   name: string;
   slug: string;
+  count?: number;
 }
 
 /**

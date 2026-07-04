@@ -19,7 +19,6 @@ interface Props {
 
 export function TagBar({ tags, active, onSelect, isAdmin = false }: Props) {
   const toast = useToast();
-  const [tagArticleCounts, setTagArticleCounts] = useState<Record<string, number>>({});
   const [deletingTag, setDeletingTag] = useState<string | null>(null);
 
   const handleDeleteTag = async (slug: string) => {
@@ -66,6 +65,9 @@ export function TagBar({ tags, active, onSelect, isAdmin = false }: Props) {
             >
               #{t.name}
             </button>
+            {t.count !== undefined && t.count > 0 && (
+              <span className="text-xs opacity-60">{t.count}</span>
+            )}
             {isAdmin && (
               <button
                 onClick={() => handleDeleteTag(t.slug)}

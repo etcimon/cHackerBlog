@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 
 export const GET = handler(async () => {
   const tags = await listAllTags();
-  return ok(tags.map((t) => ({ name: t.name, slug: t.slug })));
+  return ok(tags);
 });
 
 export const DELETE = handler(async (req: Request) => {

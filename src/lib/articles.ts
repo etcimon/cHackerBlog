@@ -343,7 +343,19 @@ export async function deleteArticle(id: string) {
 
 export async function listAllTags() {
   const prisma = getPrisma();
-  return prisma.tag.findMany({ orderBy: { name: "asc" } });
+  const tags = await prisma.tag.findMany({
+    orderBy: { name: "asc" },
+    include: {
+      _count: {
+        select: {
+          articles: {
+            where: { published: true },
+          },
+        },
+      },
+    },
+  });
+  return tags.map((t) => ({ name: t.name, slug: t.slug, count: t._count.articles }));
 }
 
 export async function deleteTag(slug: string) {

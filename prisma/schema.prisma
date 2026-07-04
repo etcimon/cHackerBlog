@@ -84,6 +84,7 @@ model Article {
   @@index([locale])
   @@index([slug])
   @@index([pinned, pinnedAt, publishedAt])
+  @@index([published])
 }
 
 /// Tags listed at the top of the feed and on each article header.

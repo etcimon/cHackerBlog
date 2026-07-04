@@ -18,6 +18,11 @@ import { ALLOWED_FILE_EXTS, extOf } from "@/lib/embeds";
 
 export const runtime = "nodejs";
 
+// Allow large file uploads (up to 1GB as configured by UPLOAD_MAX_SIZE env var).
+export const config = {
+  bodySizeLimit: "1gb",
+};
+
 // Image MIME -> canonical extension (kept for the existing image button).
 const IMAGE_MIME = new Map<string, string>([
   ["image/jpeg", "jpg"],
