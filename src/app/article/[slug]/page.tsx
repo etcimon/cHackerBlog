@@ -111,6 +111,7 @@ export default async function ArticlePage({ params }: Params) {
         tags={tags}
         totalCount={totalCount}
         prefetchPages={env.FEED_PREFETCH_PAGES}
+        pageSize={env.FEED_PAGE_SIZE}
         expandedCount={env.FEED_EXPANDED_COUNT}
         expandAll={env.FEED_EXPAND_ALL}
         initialTag={located.tag}

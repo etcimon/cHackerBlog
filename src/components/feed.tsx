@@ -22,6 +22,7 @@ interface Props {
   tags: TagItem[];
   totalCount: number;
   prefetchPages: number;
+  pageSize: number;
   /** How many leading articles render fully expanded (FEED_EXPANDED_COUNT). */
   expandedCount: number;
   /** Whether to expand ALL articles in the feed (FEED_EXPAND_ALL). */
@@ -39,6 +40,7 @@ export function Feed({
   tags,
   totalCount,
   prefetchPages,
+  pageSize,
   expandedCount,
   expandAll,
   initialTag = null,
@@ -55,7 +57,7 @@ export function Feed({
   const [allTags, setAllTags] = useState<TagItem[]>(tags);
   const [initialLoaded, setInitialLoaded] = useState(false);
   const [loadedAnchors, setLoadedAnchors] = useState<Set<string>>(new Set());
-  const [nextAnchorIndex, setNextAnchorIndex] = useState(0);
+  const [nextAnchorIndex, setNextAnchorIndex] = useState(1);
 
   const sentinelRef = useRef<HTMLDivElement>(null);
   const loadingRef = useRef(false);
@@ -71,6 +73,7 @@ export function Feed({
         if (opts.cursor) params.set("cursor", opts.cursor);
         if (opts.tag) params.set("tag", opts.tag);
         if (isAdmin) params.set("includeUnpublished", "true");
+        params.set("take", pageSize.toString());
         const page = await api.get<FeedPage>(`/api/feed?${params.toString()}`);
         setItems((prev) => (opts.reset ? page.items : [...prev, ...page.items]));
         setCursor(page.nextCursor);
@@ -86,7 +89,7 @@ export function Feed({
         setLoading(false);
       }
     },
-    [isAdmin],
+    [isAdmin, pageSize],
   );
 
   // Re-query when the active tag changes.
@@ -96,7 +99,7 @@ export function Feed({
       setItems([]);
       setCursor(null);
       setLoadedAnchors(new Set());
-      setNextAnchorIndex(0);
+      setNextAnchorIndex(1);
       void fetchPage({ tag: slug, reset: true });
     },
     [fetchPage],
