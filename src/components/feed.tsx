@@ -259,7 +259,7 @@ export function Feed({
             expanded={
               expandAll ||
               item.slug === initialTargetSlug ||
-              (idx < expandedCount && activeTag === null)
+              idx < expandedCount
             }
             onEdit={setEditing}
           />
