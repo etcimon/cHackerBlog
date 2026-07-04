@@ -15,9 +15,10 @@ interface Props {
   active: string | null;
   onSelect: (slug: string | null) => void;
   isAdmin?: boolean;
+  totalCount?: number;
 }
 
-export function TagBar({ tags, active, onSelect, isAdmin = false }: Props) {
+export function TagBar({ tags, active, onSelect, isAdmin = false, totalCount }: Props) {
   const toast = useToast();
   const [deletingTag, setDeletingTag] = useState<string | null>(null);
 
@@ -42,13 +43,16 @@ export function TagBar({ tags, active, onSelect, isAdmin = false }: Props) {
       <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={() => onSelect(null)}
-          className={`rounded-full border px-3 py-1 text-sm transition-colors ${
+          className={`flex items-center gap-1 rounded-full border px-3 py-1 text-sm transition-colors ${
             active === null
               ? "border-accent bg-accent text-bg"
               : "border-border text-muted hover:text-fg"
           }`}
         >
           All
+          {totalCount !== undefined && totalCount > 0 && (
+            <span className="text-xs opacity-60">{totalCount}</span>
+          )}
         </button>
         {tags.map((t) => (
           <div

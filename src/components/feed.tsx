@@ -8,6 +8,7 @@
  * via FEED_PREFETCH_PAGES on the server and passed in as a prop).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import type { FeedItem, FeedPage, TagItem } from "@/lib/types";
 import { api } from "@/lib/api-client";
 import { ArticleCard } from "@/components/article-card";
@@ -51,10 +52,12 @@ export function Feed({
   const [creating, setCreating] = useState(false);
   const [allTags, setAllTags] = useState<TagItem[]>(tags);
   const [initialLoaded, setInitialLoaded] = useState(false);
+  const [visibleIndex, setVisibleIndex] = useState(0);
 
   const sentinelRef = useRef<HTMLDivElement>(null);
   const loadingRef = useRef(false);
   const scrolledRef = useRef(false);
+  const articleRefs = useRef<Map<string, HTMLElement>>(new Map());
 
   const fetchPage = useCallback(
     async (opts: { cursor?: string | null; tag?: string | null; reset?: boolean }) => {
@@ -177,6 +180,38 @@ export function Feed({
     return () => observer.disconnect();
   }, [cursor, activeTag, prefetchPages, fetchPage]);
 
+  // Track which article is currently visible to hide/show the next button
+  useEffect(() => {
+    const handleScroll = () => {
+      let bestIndex = -1;
+      let maxOverlap = 0;
+
+      items.forEach((item, idx) => {
+        const el = articleRefs.current.get(item.slug);
+        if (!el) return;
+        const rect = el.getBoundingClientRect();
+        const viewportHeight = window.innerHeight;
+
+        const top = Math.max(0, rect.top);
+        const bottom = Math.min(viewportHeight, rect.bottom);
+        const overlap = Math.max(0, bottom - top);
+
+        if (overlap > maxOverlap) {
+          maxOverlap = overlap;
+          bestIndex = idx;
+        }
+      });
+
+      if (bestIndex !== -1) {
+        setVisibleIndex(bestIndex);
+      }
+    };
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    handleScroll(); // Initial check
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [items]);
+
   const handleSaved = useCallback(async () => {
     const editingSlug = editing?.slug;
     setEditing(null);
@@ -215,22 +250,71 @@ export function Feed({
     }
   }, [activeTag, editing?.slug, fetchPage]);
 
+  const handleNextPost = useCallback(() => {
+    // Find the article that is currently most visible (largest overlap with viewport)
+    let bestIndex = -1;
+    let maxOverlap = 0;
+
+    items.forEach((item, idx) => {
+      const el = articleRefs.current.get(item.slug);
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const viewportHeight = window.innerHeight;
+
+      // Calculate overlap: how much of the article is visible in the viewport
+      const top = Math.max(0, rect.top);
+      const bottom = Math.min(viewportHeight, rect.bottom);
+      const overlap = Math.max(0, bottom - top);
+
+      if (overlap > maxOverlap) {
+        maxOverlap = overlap;
+        bestIndex = idx;
+      }
+    });
+
+    // If no article is found, default to the first one
+    if (bestIndex === -1) bestIndex = 0;
+
+    // Scroll to the next article
+    const nextIndex = bestIndex + 1;
+    if (nextIndex < items.length) {
+      const nextSlug = items[nextIndex].slug;
+      const nextEl = articleRefs.current.get(nextSlug);
+      if (nextEl) {
+        nextEl.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }
+  }, [items]);
+
+  // Show next button only if there are more items loaded and we're not at the last article
+  const showNextButton = items.length > 1 && visibleIndex < items.length - 1;
+
+  // Calculate total published article count for the "All" tag
+  const totalCount = allTags.reduce((sum, tag) => sum + (tag.count || 0), 0);
+
   return (
     <>
-      <TagBar tags={allTags} active={activeTag} onSelect={selectTag} isAdmin={isAdmin} />
+      <TagBar tags={allTags} active={activeTag} onSelect={selectTag} isAdmin={isAdmin} totalCount={totalCount} />
 
       <div>
         {items.map((item, idx) => (
-          <ArticleCard
+          <div
             key={item.id}
-            item={item}
-            expanded={
-              expandAll ||
-              item.slug === initialTargetSlug ||
-              (idx < expandedCount && activeTag === null)
-            }
-            onEdit={setEditing}
-          />
+            ref={(el) => {
+              if (el) articleRefs.current.set(item.slug, el);
+              else articleRefs.current.delete(item.slug);
+            }}
+          >
+            <ArticleCard
+              item={item}
+              expanded={
+                expandAll ||
+                item.slug === initialTargetSlug ||
+                (idx < expandedCount && activeTag === null)
+              }
+              onEdit={setEditing}
+            />
+          </div>
         ))}
       </div>
 
@@ -245,6 +329,16 @@ export function Feed({
       <div ref={sentinelRef} className="h-1" />
 
       <AdminBar onNewArticle={() => setCreating(true)} />
+
+      {showNextButton && (
+        <button
+          onClick={handleNextPost}
+          className="feed-next-btn fixed bottom-6 right-6 rounded-full border border-border/50 bg-bg/80 p-3 text-fg/70 backdrop-blur-sm transition-all hover:bg-accent/10 hover:text-accent hover:border-accent/30"
+          title="Next post"
+        >
+          <ChevronDown className="h-5 w-5" />
+        </button>
+      )}
 
       {(creating || editing) && (
         <ArticleEditor

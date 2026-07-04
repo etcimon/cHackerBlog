@@ -46,6 +46,17 @@
     text-transform: uppercase;
     letter-spacing: 0.06em;
   }
+
+  // Feed next button: sharp, glowing terminal accent.
+  .feed-next-btn {
+    border-radius: 0.375rem;
+    box-shadow: 0 0 0 1px rgb(var(--cb-accent) / 0.2),
+      0 0 16px rgb(var(--cb-accent) / 0.15);
+  }
+  .feed-next-btn:hover {
+    box-shadow: 0 0 0 1px rgb(var(--cb-accent) / 0.4),
+      0 0 24px rgb(var(--cb-accent) / 0.25);
+  }
 }
 
 [data-theme="medium"] {
@@ -70,6 +81,15 @@
   }
   .share-net:hover {
     box-shadow: 0 8px 20px rgb(0 0 0 / 0.1);
+  }
+
+  // Feed next button: soft, generously rounded editorial button.
+  .feed-next-btn {
+    border-radius: 1rem;
+    box-shadow: 0 4px 12px rgb(0 0 0 / 0.1);
+  }
+  .feed-next-btn:hover {
+    box-shadow: 0 8px 20px rgb(0 0 0 / 0.15);
   }
 }
 
@@ -99,5 +119,15 @@
   .share-net:hover {
     background: rgb(var(--cb-accent) / 0.06);
     box-shadow: 0 8px 20px rgb(0 0 0 / 0.08);
+  }
+
+  // Feed next button: warm, rounded button with accent-tinted hover.
+  .feed-next-btn {
+    border-radius: 1rem;
+    box-shadow: 0 4px 12px rgb(0 0 0 / 0.08);
+  }
+  .feed-next-btn:hover {
+    background: rgb(var(--cb-accent) / 0.08);
+    box-shadow: 0 8px 20px rgb(0 0 0 / 0.12);
   }
 }
