@@ -5,6 +5,7 @@
  * tag is lifted to the Feed component). "All" clears the filter.
  */
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { X } from "lucide-react";
 import type { TagItem } from "@/lib/types";
 import { api } from "@/lib/api-client";
@@ -19,6 +20,7 @@ interface Props {
 }
 
 export function TagBar({ tags, active, onSelect, isAdmin = false, totalCount }: Props) {
+  const router = useRouter();
   const toast = useToast();
   const [deletingTag, setDeletingTag] = useState<string | null>(null);
 
@@ -42,7 +44,10 @@ export function TagBar({ tags, active, onSelect, isAdmin = false, totalCount }: 
     <nav className="sticky top-0 z-40 -mx-4 mb-4 border-b border-border bg-bg/70 px-4 py-3 backdrop-blur">
       <div className="flex flex-wrap items-center gap-2">
         <button
-          onClick={() => onSelect(null)}
+          onClick={() => {
+            onSelect(null);
+            router.push("/");
+          }}
           className={`flex items-center gap-1 rounded-full border px-3 py-1 text-sm transition-colors ${
             active === null
               ? "border-accent bg-accent text-bg"

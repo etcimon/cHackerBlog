@@ -100,6 +100,7 @@ export function Feed({
       setCursor(null);
       setLoadedAnchors(new Set());
       setNextAnchorIndex(1);
+      window.scrollTo(0, 0);
       void fetchPage({ tag: slug, reset: true });
     },
     [fetchPage],

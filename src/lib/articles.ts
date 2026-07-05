@@ -63,7 +63,7 @@ type FeedRow = {
   coverUrl: string | null;
   locale: string;
   publishedAt: Date;
-  tags: { slug: string }[];
+  tags: { name: string; slug: string }[];
   pinned: boolean;
   pinnedAt: Date | null;
   published: boolean;
@@ -90,7 +90,7 @@ export function mapFeedRow(
     coverUrl: a.coverUrl,
     locale: a.locale,
     publishedAt: a.publishedAt.toISOString(),
-    tags: a.tags.map((t) => t.slug),
+    tags: a.tags.map((t) => t.name),
     pinned: a.pinned,
     pinnedAt: a.pinnedAt?.toISOString() ?? null,
     published: a.published,
@@ -124,7 +124,7 @@ export async function getFeed(query: FeedQuery): Promise<FeedPage> {
       take: take + 1, // fetch one extra to compute nextCursor
       ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
       include: {
-        tags: { select: { slug: true } },
+        tags: { select: { name: true, slug: true } },
         _count: {
           select: { comments: true }
         }
@@ -165,7 +165,7 @@ export async function getFeed(query: FeedQuery): Promise<FeedPage> {
       take: take + 1, // fetch one extra to compute nextCursor
       ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
       include: {
-        tags: { select: { slug: true } },
+        tags: { select: { name: true, slug: true } },
         _count: {
           select: { comments: true }
         }
@@ -228,7 +228,7 @@ async function connectTags(names: string[]) {
     unique.map((name) =>
       prisma.tag.upsert({
         where: { slug: slugify(name) },
-        update: {},
+        update: { name }, // Update name to preserve case if tag already exists
         create: { name, slug: slugify(name) },
       }),
     ),

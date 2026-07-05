@@ -82,9 +82,9 @@ export function ArticleEditor({ article, allTags, onClose, onSaved }: Props) {
 
   const tags = watch("tags");
 
-  const toggleTag = (slug: string) => {
+  const toggleTag = (name: string) => {
     const set = new Set(tags);
-    set.has(slug) ? set.delete(slug) : set.add(slug);
+    set.has(name) ? set.delete(name) : set.add(name);
     setValue("tags", Array.from(set));
   };
 
@@ -167,22 +167,22 @@ export function ArticleEditor({ article, allTags, onClose, onSaved }: Props) {
               <div
                 key={t.slug}
                 className={`flex items-center gap-1 rounded-full border px-3 py-1 text-xs transition-colors ${
-                  tags.includes(t.slug)
+                  tags.includes(t.name)
                     ? "border-accent bg-accent text-bg"
                     : "border-border text-muted hover:text-fg"
                 }`}
               >
                 <button
                   type="button"
-                  onClick={() => toggleTag(t.slug)}
+                  onClick={() => toggleTag(t.name)}
                   className="hover:opacity-70"
                 >
                   #{t.name}
                 </button>
-                {tags.includes(t.slug) && (
+                {tags.includes(t.name) && (
                   <button
                     type="button"
-                    onClick={() => toggleTag(t.slug)}
+                    onClick={() => toggleTag(t.name)}
                     className="hover:opacity-70"
                   >
                     <X className="h-3 w-3" />

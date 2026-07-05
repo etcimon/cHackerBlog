@@ -83,7 +83,7 @@ async function computeFirstLoad(
   // 1. Resolve the slug -> row (with its tags) and enforce visibility.
   const target = await prisma.article.findUnique({
     where: { slug },
-    include: { tags: { select: { slug: true } } },
+    include: { tags: { select: { name: true, slug: true } } },
   });
   if (!target || (!includeUnpublished && !target.published)) {
     throw Errors.notFound("Article not found");
@@ -115,7 +115,7 @@ async function computeFirstLoad(
     orderBy: FEED_ORDER,
     take: fetchSize,
     include: {
-      tags: { select: { slug: true } },
+      tags: { select: { name: true, slug: true } },
       _count: { select: { comments: true } },
     },
   });
