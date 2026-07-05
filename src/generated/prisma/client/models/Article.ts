@@ -21,8 +21,18 @@ export type ArticleModel = runtime.Types.Result.DefaultSelection<Prisma.$Article
 
 export type AggregateArticle = {
   _count: ArticleCountAggregateOutputType | null
+  _avg: ArticleAvgAggregateOutputType | null
+  _sum: ArticleSumAggregateOutputType | null
   _min: ArticleMinAggregateOutputType | null
   _max: ArticleMaxAggregateOutputType | null
+}
+
+export type ArticleAvgAggregateOutputType = {
+  translationCount: number | null
+}
+
+export type ArticleSumAggregateOutputType = {
+  translationCount: number | null
 }
 
 export type ArticleMinAggregateOutputType = {
@@ -41,6 +51,8 @@ export type ArticleMinAggregateOutputType = {
   updatedAt: Date | null
   pinned: boolean | null
   pinnedAt: Date | null
+  translationCount: number | null
+  lastTranslationAt: Date | null
 }
 
 export type ArticleMaxAggregateOutputType = {
@@ -59,6 +71,8 @@ export type ArticleMaxAggregateOutputType = {
   updatedAt: Date | null
   pinned: boolean | null
   pinnedAt: Date | null
+  translationCount: number | null
+  lastTranslationAt: Date | null
 }
 
 export type ArticleCountAggregateOutputType = {
@@ -77,9 +91,19 @@ export type ArticleCountAggregateOutputType = {
   updatedAt: number
   pinned: number
   pinnedAt: number
+  translationCount: number
+  lastTranslationAt: number
   _all: number
 }
 
+
+export type ArticleAvgAggregateInputType = {
+  translationCount?: true
+}
+
+export type ArticleSumAggregateInputType = {
+  translationCount?: true
+}
 
 export type ArticleMinAggregateInputType = {
   id?: true
@@ -97,6 +121,8 @@ export type ArticleMinAggregateInputType = {
   updatedAt?: true
   pinned?: true
   pinnedAt?: true
+  translationCount?: true
+  lastTranslationAt?: true
 }
 
 export type ArticleMaxAggregateInputType = {
@@ -115,6 +141,8 @@ export type ArticleMaxAggregateInputType = {
   updatedAt?: true
   pinned?: true
   pinnedAt?: true
+  translationCount?: true
+  lastTranslationAt?: true
 }
 
 export type ArticleCountAggregateInputType = {
@@ -133,6 +161,8 @@ export type ArticleCountAggregateInputType = {
   updatedAt?: true
   pinned?: true
   pinnedAt?: true
+  translationCount?: true
+  lastTranslationAt?: true
   _all?: true
 }
 
@@ -174,6 +204,18 @@ export type ArticleAggregateArgs<ExtArgs extends runtime.Types.Extensions.Intern
   /**
    * {@link https://www.prisma.io/docs/concepts/components/prisma-client/aggregations Aggregation Docs}
    * 
+   * Select which fields to average
+  **/
+  _avg?: ArticleAvgAggregateInputType
+  /**
+   * {@link https://www.prisma.io/docs/concepts/components/prisma-client/aggregations Aggregation Docs}
+   * 
+   * Select which fields to sum
+  **/
+  _sum?: ArticleSumAggregateInputType
+  /**
+   * {@link https://www.prisma.io/docs/concepts/components/prisma-client/aggregations Aggregation Docs}
+   * 
    * Select which fields to find the minimum value
   **/
   _min?: ArticleMinAggregateInputType
@@ -204,6 +246,8 @@ export type ArticleGroupByArgs<ExtArgs extends runtime.Types.Extensions.Internal
   take?: number
   skip?: number
   _count?: ArticleCountAggregateInputType | true
+  _avg?: ArticleAvgAggregateInputType
+  _sum?: ArticleSumAggregateInputType
   _min?: ArticleMinAggregateInputType
   _max?: ArticleMaxAggregateInputType
 }
@@ -224,7 +268,11 @@ export type ArticleGroupByOutputType = {
   updatedAt: Date
   pinned: boolean
   pinnedAt: Date | null
+  translationCount: number
+  lastTranslationAt: Date | null
   _count: ArticleCountAggregateOutputType | null
+  _avg: ArticleAvgAggregateOutputType | null
+  _sum: ArticleSumAggregateOutputType | null
   _min: ArticleMinAggregateOutputType | null
   _max: ArticleMaxAggregateOutputType | null
 }
@@ -263,6 +311,8 @@ export type ArticleWhereInput = {
   updatedAt?: Prisma.DateTimeFilter<"Article"> | Date | string
   pinned?: Prisma.BoolFilter<"Article"> | boolean
   pinnedAt?: Prisma.DateTimeNullableFilter<"Article"> | Date | string | null
+  translationCount?: Prisma.IntFilter<"Article"> | number
+  lastTranslationAt?: Prisma.DateTimeNullableFilter<"Article"> | Date | string | null
   tags?: Prisma.TagListRelationFilter
   comments?: Prisma.CommentListRelationFilter
   translations?: Prisma.ArticleTranslationListRelationFilter
@@ -284,6 +334,8 @@ export type ArticleOrderByWithRelationInput = {
   updatedAt?: Prisma.SortOrder
   pinned?: Prisma.SortOrder
   pinnedAt?: Prisma.SortOrderInput | Prisma.SortOrder
+  translationCount?: Prisma.SortOrder
+  lastTranslationAt?: Prisma.SortOrderInput | Prisma.SortOrder
   tags?: Prisma.TagOrderByRelationAggregateInput
   comments?: Prisma.CommentOrderByRelationAggregateInput
   translations?: Prisma.ArticleTranslationOrderByRelationAggregateInput
@@ -308,6 +360,8 @@ export type ArticleWhereUniqueInput = Prisma.AtLeast<{
   updatedAt?: Prisma.DateTimeFilter<"Article"> | Date | string
   pinned?: Prisma.BoolFilter<"Article"> | boolean
   pinnedAt?: Prisma.DateTimeNullableFilter<"Article"> | Date | string | null
+  translationCount?: Prisma.IntFilter<"Article"> | number
+  lastTranslationAt?: Prisma.DateTimeNullableFilter<"Article"> | Date | string | null
   tags?: Prisma.TagListRelationFilter
   comments?: Prisma.CommentListRelationFilter
   translations?: Prisma.ArticleTranslationListRelationFilter
@@ -329,9 +383,13 @@ export type ArticleOrderByWithAggregationInput = {
   updatedAt?: Prisma.SortOrder
   pinned?: Prisma.SortOrder
   pinnedAt?: Prisma.SortOrderInput | Prisma.SortOrder
+  translationCount?: Prisma.SortOrder
+  lastTranslationAt?: Prisma.SortOrderInput | Prisma.SortOrder
   _count?: Prisma.ArticleCountOrderByAggregateInput
+  _avg?: Prisma.ArticleAvgOrderByAggregateInput
   _max?: Prisma.ArticleMaxOrderByAggregateInput
   _min?: Prisma.ArticleMinOrderByAggregateInput
+  _sum?: Prisma.ArticleSumOrderByAggregateInput
 }
 
 export type ArticleScalarWhereWithAggregatesInput = {
@@ -353,6 +411,8 @@ export type ArticleScalarWhereWithAggregatesInput = {
   updatedAt?: Prisma.DateTimeWithAggregatesFilter<"Article"> | Date | string
   pinned?: Prisma.BoolWithAggregatesFilter<"Article"> | boolean
   pinnedAt?: Prisma.DateTimeNullableWithAggregatesFilter<"Article"> | Date | string | null
+  translationCount?: Prisma.IntWithAggregatesFilter<"Article"> | number
+  lastTranslationAt?: Prisma.DateTimeNullableWithAggregatesFilter<"Article"> | Date | string | null
 }
 
 export type ArticleCreateInput = {
@@ -371,6 +431,8 @@ export type ArticleCreateInput = {
   updatedAt?: Date | string
   pinned?: boolean
   pinnedAt?: Date | string | null
+  translationCount?: number
+  lastTranslationAt?: Date | string | null
   tags?: Prisma.TagCreateNestedManyWithoutArticlesInput
   comments?: Prisma.CommentCreateNestedManyWithoutArticleInput
   translations?: Prisma.ArticleTranslationCreateNestedManyWithoutArticleInput
@@ -392,6 +454,8 @@ export type ArticleUncheckedCreateInput = {
   updatedAt?: Date | string
   pinned?: boolean
   pinnedAt?: Date | string | null
+  translationCount?: number
+  lastTranslationAt?: Date | string | null
   tags?: Prisma.TagUncheckedCreateNestedManyWithoutArticlesInput
   comments?: Prisma.CommentUncheckedCreateNestedManyWithoutArticleInput
   translations?: Prisma.ArticleTranslationUncheckedCreateNestedManyWithoutArticleInput
@@ -413,6 +477,8 @@ export type ArticleUpdateInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   pinned?: Prisma.BoolFieldUpdateOperationsInput | boolean
   pinnedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  translationCount?: Prisma.IntFieldUpdateOperationsInput | number
+  lastTranslationAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   tags?: Prisma.TagUpdateManyWithoutArticlesNestedInput
   comments?: Prisma.CommentUpdateManyWithoutArticleNestedInput
   translations?: Prisma.ArticleTranslationUpdateManyWithoutArticleNestedInput
@@ -434,6 +500,8 @@ export type ArticleUncheckedUpdateInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   pinned?: Prisma.BoolFieldUpdateOperationsInput | boolean
   pinnedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  translationCount?: Prisma.IntFieldUpdateOperationsInput | number
+  lastTranslationAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   tags?: Prisma.TagUncheckedUpdateManyWithoutArticlesNestedInput
   comments?: Prisma.CommentUncheckedUpdateManyWithoutArticleNestedInput
   translations?: Prisma.ArticleTranslationUncheckedUpdateManyWithoutArticleNestedInput
@@ -455,6 +523,8 @@ export type ArticleCreateManyInput = {
   updatedAt?: Date | string
   pinned?: boolean
   pinnedAt?: Date | string | null
+  translationCount?: number
+  lastTranslationAt?: Date | string | null
 }
 
 export type ArticleUpdateManyMutationInput = {
@@ -473,6 +543,8 @@ export type ArticleUpdateManyMutationInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   pinned?: Prisma.BoolFieldUpdateOperationsInput | boolean
   pinnedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  translationCount?: Prisma.IntFieldUpdateOperationsInput | number
+  lastTranslationAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
 }
 
 export type ArticleUncheckedUpdateManyInput = {
@@ -491,6 +563,8 @@ export type ArticleUncheckedUpdateManyInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   pinned?: Prisma.BoolFieldUpdateOperationsInput | boolean
   pinnedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  translationCount?: Prisma.IntFieldUpdateOperationsInput | number
+  lastTranslationAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
 }
 
 export type ArticleCountOrderByAggregateInput = {
@@ -509,6 +583,12 @@ export type ArticleCountOrderByAggregateInput = {
   updatedAt?: Prisma.SortOrder
   pinned?: Prisma.SortOrder
   pinnedAt?: Prisma.SortOrder
+  translationCount?: Prisma.SortOrder
+  lastTranslationAt?: Prisma.SortOrder
+}
+
+export type ArticleAvgOrderByAggregateInput = {
+  translationCount?: Prisma.SortOrder
 }
 
 export type ArticleMaxOrderByAggregateInput = {
@@ -527,6 +607,8 @@ export type ArticleMaxOrderByAggregateInput = {
   updatedAt?: Prisma.SortOrder
   pinned?: Prisma.SortOrder
   pinnedAt?: Prisma.SortOrder
+  translationCount?: Prisma.SortOrder
+  lastTranslationAt?: Prisma.SortOrder
 }
 
 export type ArticleMinOrderByAggregateInput = {
@@ -545,6 +627,12 @@ export type ArticleMinOrderByAggregateInput = {
   updatedAt?: Prisma.SortOrder
   pinned?: Prisma.SortOrder
   pinnedAt?: Prisma.SortOrder
+  translationCount?: Prisma.SortOrder
+  lastTranslationAt?: Prisma.SortOrder
+}
+
+export type ArticleSumOrderByAggregateInput = {
+  translationCount?: Prisma.SortOrder
 }
 
 export type ArticleScalarRelationFilter = {
@@ -648,6 +736,8 @@ export type ArticleCreateWithoutTranslationsInput = {
   updatedAt?: Date | string
   pinned?: boolean
   pinnedAt?: Date | string | null
+  translationCount?: number
+  lastTranslationAt?: Date | string | null
   tags?: Prisma.TagCreateNestedManyWithoutArticlesInput
   comments?: Prisma.CommentCreateNestedManyWithoutArticleInput
 }
@@ -668,6 +758,8 @@ export type ArticleUncheckedCreateWithoutTranslationsInput = {
   updatedAt?: Date | string
   pinned?: boolean
   pinnedAt?: Date | string | null
+  translationCount?: number
+  lastTranslationAt?: Date | string | null
   tags?: Prisma.TagUncheckedCreateNestedManyWithoutArticlesInput
   comments?: Prisma.CommentUncheckedCreateNestedManyWithoutArticleInput
 }
@@ -704,6 +796,8 @@ export type ArticleUpdateWithoutTranslationsInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   pinned?: Prisma.BoolFieldUpdateOperationsInput | boolean
   pinnedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  translationCount?: Prisma.IntFieldUpdateOperationsInput | number
+  lastTranslationAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   tags?: Prisma.TagUpdateManyWithoutArticlesNestedInput
   comments?: Prisma.CommentUpdateManyWithoutArticleNestedInput
 }
@@ -724,6 +818,8 @@ export type ArticleUncheckedUpdateWithoutTranslationsInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   pinned?: Prisma.BoolFieldUpdateOperationsInput | boolean
   pinnedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  translationCount?: Prisma.IntFieldUpdateOperationsInput | number
+  lastTranslationAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   tags?: Prisma.TagUncheckedUpdateManyWithoutArticlesNestedInput
   comments?: Prisma.CommentUncheckedUpdateManyWithoutArticleNestedInput
 }
@@ -744,6 +840,8 @@ export type ArticleCreateWithoutTagsInput = {
   updatedAt?: Date | string
   pinned?: boolean
   pinnedAt?: Date | string | null
+  translationCount?: number
+  lastTranslationAt?: Date | string | null
   comments?: Prisma.CommentCreateNestedManyWithoutArticleInput
   translations?: Prisma.ArticleTranslationCreateNestedManyWithoutArticleInput
 }
@@ -764,6 +862,8 @@ export type ArticleUncheckedCreateWithoutTagsInput = {
   updatedAt?: Date | string
   pinned?: boolean
   pinnedAt?: Date | string | null
+  translationCount?: number
+  lastTranslationAt?: Date | string | null
   comments?: Prisma.CommentUncheckedCreateNestedManyWithoutArticleInput
   translations?: Prisma.ArticleTranslationUncheckedCreateNestedManyWithoutArticleInput
 }
@@ -808,6 +908,8 @@ export type ArticleScalarWhereInput = {
   updatedAt?: Prisma.DateTimeFilter<"Article"> | Date | string
   pinned?: Prisma.BoolFilter<"Article"> | boolean
   pinnedAt?: Prisma.DateTimeNullableFilter<"Article"> | Date | string | null
+  translationCount?: Prisma.IntFilter<"Article"> | number
+  lastTranslationAt?: Prisma.DateTimeNullableFilter<"Article"> | Date | string | null
 }
 
 export type ArticleCreateWithoutCommentsInput = {
@@ -826,6 +928,8 @@ export type ArticleCreateWithoutCommentsInput = {
   updatedAt?: Date | string
   pinned?: boolean
   pinnedAt?: Date | string | null
+  translationCount?: number
+  lastTranslationAt?: Date | string | null
   tags?: Prisma.TagCreateNestedManyWithoutArticlesInput
   translations?: Prisma.ArticleTranslationCreateNestedManyWithoutArticleInput
 }
@@ -846,6 +950,8 @@ export type ArticleUncheckedCreateWithoutCommentsInput = {
   updatedAt?: Date | string
   pinned?: boolean
   pinnedAt?: Date | string | null
+  translationCount?: number
+  lastTranslationAt?: Date | string | null
   tags?: Prisma.TagUncheckedCreateNestedManyWithoutArticlesInput
   translations?: Prisma.ArticleTranslationUncheckedCreateNestedManyWithoutArticleInput
 }
@@ -882,6 +988,8 @@ export type ArticleUpdateWithoutCommentsInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   pinned?: Prisma.BoolFieldUpdateOperationsInput | boolean
   pinnedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  translationCount?: Prisma.IntFieldUpdateOperationsInput | number
+  lastTranslationAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   tags?: Prisma.TagUpdateManyWithoutArticlesNestedInput
   translations?: Prisma.ArticleTranslationUpdateManyWithoutArticleNestedInput
 }
@@ -902,6 +1010,8 @@ export type ArticleUncheckedUpdateWithoutCommentsInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   pinned?: Prisma.BoolFieldUpdateOperationsInput | boolean
   pinnedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  translationCount?: Prisma.IntFieldUpdateOperationsInput | number
+  lastTranslationAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   tags?: Prisma.TagUncheckedUpdateManyWithoutArticlesNestedInput
   translations?: Prisma.ArticleTranslationUncheckedUpdateManyWithoutArticleNestedInput
 }
@@ -922,6 +1032,8 @@ export type ArticleUpdateWithoutTagsInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   pinned?: Prisma.BoolFieldUpdateOperationsInput | boolean
   pinnedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  translationCount?: Prisma.IntFieldUpdateOperationsInput | number
+  lastTranslationAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   comments?: Prisma.CommentUpdateManyWithoutArticleNestedInput
   translations?: Prisma.ArticleTranslationUpdateManyWithoutArticleNestedInput
 }
@@ -942,6 +1054,8 @@ export type ArticleUncheckedUpdateWithoutTagsInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   pinned?: Prisma.BoolFieldUpdateOperationsInput | boolean
   pinnedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  translationCount?: Prisma.IntFieldUpdateOperationsInput | number
+  lastTranslationAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   comments?: Prisma.CommentUncheckedUpdateManyWithoutArticleNestedInput
   translations?: Prisma.ArticleTranslationUncheckedUpdateManyWithoutArticleNestedInput
 }
@@ -962,6 +1076,8 @@ export type ArticleUncheckedUpdateManyWithoutTagsInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   pinned?: Prisma.BoolFieldUpdateOperationsInput | boolean
   pinnedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  translationCount?: Prisma.IntFieldUpdateOperationsInput | number
+  lastTranslationAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
 }
 
 
@@ -1029,6 +1145,8 @@ export type ArticleSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs 
   updatedAt?: boolean
   pinned?: boolean
   pinnedAt?: boolean
+  translationCount?: boolean
+  lastTranslationAt?: boolean
   tags?: boolean | Prisma.Article$tagsArgs<ExtArgs>
   comments?: boolean | Prisma.Article$commentsArgs<ExtArgs>
   translations?: boolean | Prisma.Article$translationsArgs<ExtArgs>
@@ -1051,6 +1169,8 @@ export type ArticleSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Exten
   updatedAt?: boolean
   pinned?: boolean
   pinnedAt?: boolean
+  translationCount?: boolean
+  lastTranslationAt?: boolean
 }, ExtArgs["result"]["article"]>
 
 export type ArticleSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
@@ -1069,6 +1189,8 @@ export type ArticleSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Exten
   updatedAt?: boolean
   pinned?: boolean
   pinnedAt?: boolean
+  translationCount?: boolean
+  lastTranslationAt?: boolean
 }, ExtArgs["result"]["article"]>
 
 export type ArticleSelectScalar = {
@@ -1087,9 +1209,11 @@ export type ArticleSelectScalar = {
   updatedAt?: boolean
   pinned?: boolean
   pinnedAt?: boolean
+  translationCount?: boolean
+  lastTranslationAt?: boolean
 }
 
-export type ArticleOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "slug" | "locale" | "title" | "content" | "coverUrl" | "seoKeywords" | "seoDescription" | "thumbnailUrl" | "published" | "publishedAt" | "createdAt" | "updatedAt" | "pinned" | "pinnedAt", ExtArgs["result"]["article"]>
+export type ArticleOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "slug" | "locale" | "title" | "content" | "coverUrl" | "seoKeywords" | "seoDescription" | "thumbnailUrl" | "published" | "publishedAt" | "createdAt" | "updatedAt" | "pinned" | "pinnedAt" | "translationCount" | "lastTranslationAt", ExtArgs["result"]["article"]>
 export type ArticleInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   tags?: boolean | Prisma.Article$tagsArgs<ExtArgs>
   comments?: boolean | Prisma.Article$commentsArgs<ExtArgs>
@@ -1122,6 +1246,8 @@ export type $ArticlePayload<ExtArgs extends runtime.Types.Extensions.InternalArg
     updatedAt: Date
     pinned: boolean
     pinnedAt: Date | null
+    translationCount: number
+    lastTranslationAt: Date | null
   }, ExtArgs["result"]["article"]>
   composites: {}
 }
@@ -1563,6 +1689,8 @@ export interface ArticleFieldRefs {
   readonly updatedAt: Prisma.FieldRef<"Article", 'DateTime'>
   readonly pinned: Prisma.FieldRef<"Article", 'Boolean'>
   readonly pinnedAt: Prisma.FieldRef<"Article", 'DateTime'>
+  readonly translationCount: Prisma.FieldRef<"Article", 'Int'>
+  readonly lastTranslationAt: Prisma.FieldRef<"Article", 'DateTime'>
 }
     
 

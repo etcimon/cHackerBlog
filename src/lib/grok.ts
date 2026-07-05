@@ -16,7 +16,7 @@ import { marked } from "marked";
 import TurndownService from "turndown";
 import { env, grokConfigured } from "@/lib/env";
 import { getPrisma } from "@/lib/prisma";
-import { remember, invalidate } from "@/lib/cache";
+import { remember, invalidate, get, set } from "@/lib/cache";
 import {
   registerEmbedExtension,
   addEmbedTurndownRule,
@@ -28,9 +28,46 @@ export { grokConfigured };
 
 const log = createLogger("grok");
 
+/**
+ * Get the current UTC date as a string (YYYY-MM-DD) for rate limit key.
+ */
+function getUtcDateKey(): string {
+  const now = new Date();
+  return now.toISOString().split('T')[0]; // YYYY-MM-DD
+}
+
+/**
+ * Check and increment the global Grok API rate limit.
+ * Throws an error if the limit is exceeded.
+ */
+async function checkGlobalRateLimit(): Promise<void> {
+  const dateKey = getUtcDateKey();
+  const cacheKey = `grok:rate-limit:${dateKey}`;
+
+  const current = await get<number>("grok-rate-limit", cacheKey);
+  const count = current ?? 0;
+
+  if (count >= env.GROK_RATE_LIMIT_DAY) {
+    throw new Error(`Grok API rate limit exceeded: maximum ${env.GROK_RATE_LIMIT_DAY} calls per day`);
+  }
+
+  // Increment the counter
+  await set("grok-rate-limit", cacheKey, count + 1, 86400); // TTL 24 hours
+}
+
 // Enable the `@[name](url)` / sized-image / preview-separator markdown grammar
 // on the shared marked instance (idempotent).
 registerEmbedExtension(marked);
+
+// Configure marked to preserve language classes in code blocks
+marked.use({
+  renderer: {
+    code(code: string, language: string | undefined) {
+      const lang = language ? ` class="language-${language}"` : "";
+      return `<pre><code${lang}>${code}</code></pre>`;
+    },
+  },
+});
 
 /** Reduce article HTML to canonical, translation-safe Markdown. */
 export function htmlToTranslatableMarkdown(html: string): string {
@@ -108,9 +145,15 @@ export type CompletionFn = (prompt: string) => Promise<string>;
 /**
  * Call the Grok chat-completions endpoint and return the message content.
  * Uses the OpenAI-compatible schema exposed by the x.ai API.
+ *
+ * Enforces a global rate limit (GROK_RATE_LIMIT_DAY) before making the API call.
  */
 export const callGrok: CompletionFn = async (prompt: string): Promise<string> => {
   if (!grokConfigured()) throw new Error("Grok is not configured");
+
+  // Check global rate limit before making the API call
+  await checkGlobalRateLimit();
+
   const url = `${env.GROK_BASE_URL.replace(/\/$/, "")}/chat/completions`;
   const res = await fetch(url, {
     method: "POST",
@@ -174,9 +217,14 @@ export async function translateArticleBody(
     complete(buildTitlePrompt(input.title, input.sourceLocale, input.targetLocale)),
   ]);
 
+  // Ensure the translated markdown ends with a newline to preserve line endings
+  const normalizedMarkdown = translatedMarkdown.endsWith("\n")
+    ? translatedMarkdown
+    : translatedMarkdown + "\n";
+
   return {
     title: translatedTitle.trim() || input.title,
-    content: markdownToHtml(translatedMarkdown),
+    content: markdownToHtml(normalizedMarkdown),
   };
 }
 
@@ -193,6 +241,9 @@ const cacheKey = (articleId: string, locale: string) => `${articleId}:${locale}`
  * chain: translation cache -> ArticleTranslation row -> Grok. On a Grok miss
  * the result is persisted (durable) and cached (hot). If the target locale
  * equals the source, the original is returned unchanged (no API call).
+ *
+ * Enforces a rate limit of 10 translations per day per article, reset when
+ * the article is updated or deleted.
  */
 export async function translateArticle(opts: {
   articleId: string;
@@ -222,6 +273,31 @@ export async function translateArticle(opts: {
         return { locale: targetLocale, title: existing.title, content: existing.content };
       }
 
+      // Check rate limit: 10 translations per day per article
+      const article = await prisma.article.findUnique({
+        where: { id: articleId },
+        select: { translationCount: true, lastTranslationAt: true },
+      });
+
+      if (!article) {
+        throw new Error("Article not found");
+      }
+
+      const now = new Date();
+      const lastTranslation = article.lastTranslationAt ? new Date(article.lastTranslationAt) : null;
+      const oneDayMs = 24 * 60 * 60 * 1000;
+
+      // Reset count if it's a new day (more than 24 hours since last translation)
+      let currentCount = article.translationCount;
+      if (lastTranslation && (now.getTime() - lastTranslation.getTime()) > oneDayMs) {
+        currentCount = 0;
+      }
+
+      // Enforce limit
+      if (currentCount >= 10) {
+        throw new Error("Translation rate limit exceeded: maximum 10 translations per day per article");
+      }
+
       // Miss: translate via Grok, then persist write-through (DB first).
       const translated = await translateArticleBody({
         title: opts.title,
@@ -243,6 +319,15 @@ export async function translateArticle(opts: {
         },
       });
 
+      // Increment translation count and update timestamp
+      await prisma.article.update({
+        where: { id: articleId },
+        data: {
+          translationCount: currentCount + 1,
+          lastTranslationAt: now,
+        },
+      });
+
       return { locale: targetLocale, title: translated.title, content: translated.content };
     },
   );
@@ -252,12 +337,27 @@ export async function translateArticle(opts: {
  * Drop all cached + persisted translations for an article. Called from
  * lib/articles.ts whenever the source article changes or is deleted so a stale
  * revision is never served (the DB rows also cascade-delete with the article).
+ *
+ * Also resets the translation rate limit counters (translationCount and
+ * lastTranslationAt) since the article content has changed.
  */
 export async function invalidateArticleTranslations(articleId: string): Promise<void> {
   try {
     await getPrisma().articleTranslation.deleteMany({ where: { articleId } });
   } catch (err) {
     log.warn("failed to delete translations for", articleId, err);
+  }
+  // Reset rate limit counters
+  try {
+    await getPrisma().article.update({
+      where: { id: articleId },
+      data: {
+        translationCount: 0,
+        lastTranslationAt: null,
+      },
+    });
+  } catch (err) {
+    log.warn("failed to reset translation rate limit for", articleId, err);
   }
   // Cache keys are `${articleId}:${locale}`; clearing the whole category is the
   // simplest correct eviction given the KV helper's prefix granularity.

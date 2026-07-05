@@ -82,6 +82,10 @@ model Article {
   pinned      Boolean   @default(false) @map("pinned")
   pinnedAt    DateTime? @map("pinned_at")
 
+  // Translation rate limiting: track daily translation count per article
+  translationCount    Int      @default(0) @map("translation_count")
+  lastTranslationAt   DateTime? @map("last_translation_at")
+
   tags         Tag[]                @relation("ArticleTags")
   comments     Comment[]
   translations ArticleTranslation[]

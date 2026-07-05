@@ -160,6 +160,8 @@ const schema = z.object({
   // is the current recommended chat model. See https://docs.x.ai/developers/models
   GROK_MODEL: stringWithDefault("grok-4.3"),
   GROK_TEMPERATURE: z.coerce.number().min(0).max(2).default(0.2),
+  // Global rate limit for Grok API calls (per day). Resets at midnight UTC.
+  GROK_RATE_LIMIT_DAY: z.coerce.number().int().positive().default(100),
   // Tunable prompt templates (placeholders documented above the defaults).
   GROK_TRANSLATION_PROMPT: stringWithDefault(DEFAULT_GROK_TRANSLATION_PROMPT),
   GROK_TITLE_PROMPT: stringWithDefault(DEFAULT_GROK_TITLE_PROMPT),

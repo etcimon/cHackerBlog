@@ -81,3 +81,24 @@ export async function invalidate(
     /* ignore */
   }
 }
+
+/**
+ * Simple get/set functions for non-categorized cache entries.
+ * Used for global rate limiting and other cross-category counters.
+ */
+export async function get<T>(category: string, key: string): Promise<T | null> {
+  try {
+    const raw = await kvGet(`${category}:${key}`);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function set(category: string, key: string, value: unknown, ttlSeconds?: number): Promise<void> {
+  try {
+    await kvSet(`${category}:${key}`, JSON.stringify(value), ttlSeconds);
+  } catch {
+    /* ignore cache write failures */
+  }
+}

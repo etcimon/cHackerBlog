@@ -851,7 +851,9 @@ export const ArticleScalarFieldEnum = {
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',
   pinned: 'pinned',
-  pinnedAt: 'pinnedAt'
+  pinnedAt: 'pinnedAt',
+  translationCount: 'translationCount',
+  lastTranslationAt: 'lastTranslationAt'
 } as const
 
 export type ArticleScalarFieldEnum = (typeof ArticleScalarFieldEnum)[keyof typeof ArticleScalarFieldEnum]

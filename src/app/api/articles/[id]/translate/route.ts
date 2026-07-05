@@ -46,13 +46,16 @@ export const POST = handler<Ctx>(async (req, { params }) => {
       sourceLocale: source.locale,
     });
   } catch (err) {
+    const message = err instanceof Error ? err.message : "Translation failed";
+
+    // Rate limit exceeded -> 429 Too Many Requests
+    if (message.includes("rate limit exceeded")) {
+      throw new AppError(message, 429, "RATE_LIMIT_EXCEEDED");
+    }
+
     // Upstream (Grok) failure -> 502 Bad Gateway with the real reason so the
     // client toast is actionable (e.g. invalid GROK_MODEL / GROK_API_KEY).
-    throw new AppError(
-      err instanceof Error ? err.message : "Translation failed",
-      502,
-      "GROK_ERROR",
-    );
+    throw new AppError(message, 502, "GROK_ERROR");
   }
 
   return ok({
