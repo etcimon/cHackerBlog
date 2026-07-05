@@ -1,0 +1,28 @@
+{
+  "locale": "English",
+  "common": {
+    "home": "Home",
+    "search": "Search",
+    "tags": "Tags",
+    "readMore": "Read more",
+    "fullText": "Full text",
+    "loading": "Loading…",
+    "edit": "Edit",
+    "pinned": "Pinned",
+    "unpublished": "Unpublished",
+    "back": "Back"
+  },
+  "translation": {
+    "show": "Show translation",
+    "showOriginal": "Show original",
+    "translated": "(translated)",
+    "translating": "Translating…",
+    "failed": "Translation failed"
+  },
+  "comments": {
+    "title": "Comments",
+    "post": "Post comment",
+    "placeholder": "Write a comment…",
+    "empty": "No comments yet. Be the first."
+  }
+}

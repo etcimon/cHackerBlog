@@ -36,6 +36,12 @@ model SiteSettings {
   linkedinUrl         String? @map("linkedin_url")
   socialAutopost      Boolean @default(false) @map("social_autopost")
 
+  // Localization policy. `defaultLocale` is the site's primary language;
+  // `translationMode` is "default" (always defaultLocale) or "user-specific"
+  // (negotiate from the visitor + expose the Grok "show translation" affordance).
+  defaultLocale       String  @default("en") @map("default_locale")
+  translationMode     String  @default("default") @map("translation_mode")
+
   // NOTE: theme/styling is intentionally NOT stored here. The active theme is
   // chosen by the THEME env var and defined in SCSS (src/styles/themes).
 
@@ -76,8 +82,9 @@ model Article {
   pinned      Boolean   @default(false) @map("pinned")
   pinnedAt    DateTime? @map("pinned_at")
 
-  tags        Tag[]     @relation("ArticleTags")
-  comments    Comment[]
+  tags         Tag[]                @relation("ArticleTags")
+  comments     Comment[]
+  translations ArticleTranslation[]
 
   @@map("articles")
   @@index([published, publishedAt, pinned, pinnedAt])
@@ -85,6 +92,29 @@ model Article {
   @@index([slug])
   @@index([pinned, pinnedAt, publishedAt])
   @@index([published])
+}
+
+/// A cached/persisted machine translation of an article into a target locale.
+/// Produced on demand by lib/grok.ts. `content` stores translated HTML (the
+/// canonical body representation), `title` the translated title. Exactly one
+/// row per (article, locale). Cascade-deleted with the source article and
+/// wiped on source edits so a stale revision is never served.
+model ArticleTranslation {
+  id           String   @id @default(cuid()) @map("id")
+  articleId    String   @map("article_id")
+  article      Article  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  locale       String   @map("locale")
+  sourceLocale String   @default("en") @map("source_locale")
+  title        String   @map("title")
+  content      String   @map("content")
+
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([articleId, locale])
+  @@map("article_translations")
+  @@index([articleId, locale])
 }
 
 /// Tags listed at the top of the feed and on each article header.

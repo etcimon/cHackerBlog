@@ -1,0 +1,28 @@
+{
+  "locale": "Español",
+  "common": {
+    "home": "Inicio",
+    "search": "Buscar",
+    "tags": "Etiquetas",
+    "readMore": "Leer más",
+    "fullText": "Texto completo",
+    "loading": "Cargando…",
+    "edit": "Editar",
+    "pinned": "Fijado",
+    "unpublished": "No publicado",
+    "back": "Atrás"
+  },
+  "translation": {
+    "show": "Mostrar traducción",
+    "showOriginal": "Mostrar original",
+    "translated": "(traducido)",
+    "translating": "Traduciendo…",
+    "failed": "La traducción falló"
+  },
+  "comments": {
+    "title": "Comentarios",
+    "post": "Publicar comentario",
+    "placeholder": "Escribe un comentario…",
+    "empty": "Aún no hay comentarios. Sé el primero."
+  }
+}

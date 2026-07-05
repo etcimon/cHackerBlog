@@ -14,6 +14,7 @@ import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { siteSettingsSchema, type SiteSettingsInput } from "@/lib/schemas";
+import { SUPPORTED_LOCALES } from "@/lib/i18n";
 import { api, ApiClientError } from "@/lib/api-client";
 import { useAdmin } from "@/components/admin-context";
 import { useToast } from "@/components/toast";
@@ -40,6 +41,8 @@ export default function SetupPage() {
       title: "cHackerBlog",
       description: "",
       socialAutopost: false,
+      defaultLocale: "en",
+      translationMode: "default",
     },
   });
 
@@ -123,6 +126,34 @@ export default function SetupPage() {
             <input type="checkbox" {...register("socialAutopost")} className="accent-accent" />
             Auto-post new articles to X and LinkedIn
           </label>
+        </section>
+
+        <section className="space-y-3">
+          <h2 className="font-heading text-xl font-semibold text-accent">Language</h2>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-sm text-muted">Default language</label>
+              <select {...register("defaultLocale")} className={FIELD}>
+                {SUPPORTED_LOCALES.map((l) => (
+                  <option key={l.code} value={l.code}>
+                    {l.label} ({l.nativeName})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-sm text-muted">Translation mode</label>
+              <select {...register("translationMode")} className={FIELD}>
+                <option value="default">Default language only</option>
+                <option value="user-specific">User-specific (per-visitor)</option>
+              </select>
+            </div>
+          </div>
+          <p className="text-sm text-muted">
+            In <code>user-specific</code> mode the site chrome follows each
+            visitor&apos;s language and, when a Grok API key is configured,
+            articles show a &quot;show translation&quot; button.
+          </p>
         </section>
 
         <section className="space-y-2">

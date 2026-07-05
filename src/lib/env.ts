@@ -13,6 +13,43 @@ const boolish = z
   .transform((v) => v === true || v === "true" || v === "1")
   .pipe(z.boolean());
 
+/**
+ * A string schema whose default also applies when the env var is present but
+ * blank (e.g. `FOO=` in .env). Plain `.default()` only fires on `undefined`, so
+ * we normalize empty/whitespace-only values to `undefined` first. This lets
+ * `.env.example` ship blank tunables that fall back to code-defined defaults.
+ */
+const stringWithDefault = (def: string, refine?: (s: z.ZodString) => z.ZodTypeAny) =>
+  z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (refine ? refine(z.string()) : z.string()).default(def) as z.ZodTypeAny,
+  );
+
+/**
+ * Default Grok translation prompt for article bodies. Operates on Markdown so
+ * structural elements survive intact. Placeholders substituted at call time:
+ *   {sourceLang} {targetLang} {sourceLocale} {targetLocale} {content}
+ * Tune this in the environment (GROK_TRANSLATION_PROMPT) to adjust tone,
+ * formality, or glossary handling without touching code.
+ */
+export const DEFAULT_GROK_TRANSLATION_PROMPT = `You are a professional translator. Translate the following Markdown document from {sourceLang} to {targetLang}.
+Rules:
+- Preserve ALL Markdown structure exactly: headings, lists, tables, blockquotes, and emphasis.
+- Do NOT translate or alter fenced code blocks, inline code, URLs, HTML tags, or image/link targets.
+- Preserve embed tags of the form @[label](url) exactly; you may translate the visible label text only.
+- Keep the literal marker --END PREVIEW-- unchanged and in its original position.
+- Return ONLY the translated Markdown, with no commentary and no surrounding code fences.
+
+{content}`;
+
+/**
+ * Default Grok prompt for translating a short article title. Placeholders:
+ *   {sourceLang} {targetLang} {sourceLocale} {targetLocale} {content}
+ */
+export const DEFAULT_GROK_TITLE_PROMPT = `Translate the following blog article title from {sourceLang} to {targetLang}. Return only the translated title text, with no quotes, labels, or extra words.
+
+{content}`;
+
 /** Parse size strings like "200M", "1G", "500K" to bytes. */
 const sizeBytes = z
   .string()
@@ -66,6 +103,9 @@ const schema = z.object({
   CACHE_TTL_GLOBAL_SETTINGS: z.coerce.number().int().positive().default(300),
   CACHE_TTL_ARTICLE: z.coerce.number().int().positive().default(120),
   CACHE_TTL_FEED: z.coerce.number().int().positive().default(30),
+  // Translations are a pure function of an article revision, so they can live
+  // much longer (invalidated explicitly on article edit/delete).
+  CACHE_TTL_TRANSLATION: z.coerce.number().int().positive().default(86_400),
 
   // Rate limiting
   RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
@@ -112,12 +152,29 @@ const schema = z.object({
   LINKEDIN_ACCESS_TOKEN: z.string().optional(),
   LINKEDIN_AUTHOR_URN: z.string().optional(),
 
+  // Grok (x.ai) translation (optional; feature enabled only if GROK_API_KEY set).
+  GROK_API_KEY: z.string().optional(),
+  GROK_BASE_URL: stringWithDefault("https://api.x.ai/v1", (s) => s.url()),
+  // Must be a model your API key can access. `grok-2-latest` is deprecated and
+  // returns HTTP 400 ("model does not exist"); `grok-4.3` (alias grok-latest)
+  // is the current recommended chat model. See https://docs.x.ai/developers/models
+  GROK_MODEL: stringWithDefault("grok-4.3"),
+  GROK_TEMPERATURE: z.coerce.number().min(0).max(2).default(0.2),
+  // Tunable prompt templates (placeholders documented above the defaults).
+  GROK_TRANSLATION_PROMPT: stringWithDefault(DEFAULT_GROK_TRANSLATION_PROMPT),
+  GROK_TITLE_PROMPT: stringWithDefault(DEFAULT_GROK_TITLE_PROMPT),
+
   // Uploads
   UPLOAD_DIR: z.string().default("./public/uploads"),
   UPLOAD_MAX_SIZE: sizeBytes.default("200M"),
 
   // Comments
   COMMENTS_ENABLED: boolish.default(true),
+
+  // Internationalization kill-switch. When true, the site is forced to English,
+  // the /[lang]/... URL scheme is disabled (404), and the footer language
+  // switcher is hidden. Article-level Grok translation is unaffected.
+  DISABLE_I18N: boolish.default(false),
 });
 
 const parsed = schema.safeParse(process.env);
@@ -134,3 +191,12 @@ export type Env = typeof env;
 
 export const isProd = env.NODE_ENV === "production";
 export const isDev = env.NODE_ENV === "development";
+
+/**
+ * Whether the Grok translation integration is usable. Mirrors the optional-
+ * integration pattern of social auto-posting: absent credentials disable the
+ * feature entirely (no "show translation" affordance is rendered).
+ */
+export function grokConfigured(): boolean {
+  return typeof env.GROK_API_KEY === "string" && env.GROK_API_KEY.length > 0;
+}

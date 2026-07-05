@@ -7,6 +7,7 @@ import { handler, ok } from "@/lib/errors";
 import { siteSettingsSchema } from "@/lib/schemas";
 import { getSettings, updateSettings } from "@/lib/settings";
 import { requireAdmin } from "@/lib/auth";
+import { grokConfigured, env } from "@/lib/env";
 
 export const runtime = "nodejs";
 
@@ -31,6 +32,14 @@ export const GET = handler(async () => {
     xHandle: s.xHandle,
     linkedinUrl: s.linkedinUrl,
     socialAutopost: s.socialAutopost,
+    defaultLocale: s.defaultLocale,
+    translationMode: s.translationMode,
+    // Whether the Grok translation integration is usable (drives the
+    // "show translation" affordance on article cards).
+    grokConfigured: grokConfigured(),
+    // i18n kill-switch: when true the site is forced to English and the
+    // language switcher is hidden (see DISABLE_I18N).
+    i18nDisabled: env.DISABLE_I18N,
   });
 });
 

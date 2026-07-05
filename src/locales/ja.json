@@ -1,0 +1,28 @@
+{
+  "locale": "日本語",
+  "common": {
+    "home": "ホーム",
+    "search": "検索",
+    "tags": "タグ",
+    "readMore": "続きを読む",
+    "fullText": "全文",
+    "loading": "読み込み中…",
+    "edit": "編集",
+    "pinned": "固定済み",
+    "unpublished": "未公開",
+    "back": "戻る"
+  },
+  "translation": {
+    "show": "翻訳を表示",
+    "showOriginal": "原文を表示",
+    "translated": "（翻訳済み）",
+    "translating": "翻訳中…",
+    "failed": "翻訳に失敗しました"
+  },
+  "comments": {
+    "title": "コメント",
+    "post": "コメントを投稿",
+    "placeholder": "コメントを書く…",
+    "empty": "まだコメントはありません。最初のコメントを。"
+  }
+}

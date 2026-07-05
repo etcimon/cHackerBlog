@@ -14,11 +14,13 @@ import {
   useMemo,
   useRef,
 } from "react";
-import { ChevronDown, Pencil, Tag as TagIcon, Pin, PinOff, EyeOff } from "lucide-react";
+import { ChevronDown, Pencil, Tag as TagIcon, Pin, PinOff, EyeOff, Languages } from "lucide-react";
 import type { FeedItem } from "@/lib/types";
 import { api, ApiClientError } from "@/lib/api-client";
 import { useToast } from "@/components/toast";
 import { useAdmin } from "@/components/admin-context";
+import { useSiteConfig } from "@/lib/use-site-config";
+import { useI18n } from "@/lib/use-i18n";
 import { CommentBar } from "@/components/comment-bar";
 import { useCommentsEnabled } from "@/lib/use-comments-enabled";
 import {
@@ -46,8 +48,16 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
   const [pinning, setPinning] = useState(false);
   const [published, setPublished] = useState(item.published);
   const [publishing, setPublishing] = useState(false);
+  // Translation state (Grok-powered). `translated` toggles the view between the
+  // original body/title and the fetched translation for the visitor's locale.
+  const [translated, setTranslated] = useState(false);
+  const [translating, setTranslating] = useState(false);
+  const [translatedTitle, setTranslatedTitle] = useState<string | undefined>(undefined);
+  const [translatedContent, setTranslatedContent] = useState<string | undefined>(undefined);
   const toast = useToast();
   const { isAdmin } = useAdmin();
+  const config = useSiteConfig();
+  const { locale: userLocale, t } = useI18n();
   const commentsEnabled = useCommentsEnabled();
   const articleBodyRef = useRef<HTMLDivElement>(null);
   // Remembers which code blocks the reader expanded, keyed by block index, so
@@ -76,7 +86,21 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
   // What to render in the article body: the full content when open, otherwise
   // the HTML preview (present only when the article defines a `--END PREVIEW--`
   // separator). Undefined means "nothing to render yet" (e.g. body not fetched).
-  const bodyHtml = open ? content : item.previewHtml;
+  // Whether the Grok "show translation" affordance applies: the integration is
+  // configured and the visitor's resolved locale (from the /[lang]/ URL prefix,
+  // browser, or site policy) differs from the article's own language.
+  const canTranslate = !!config?.grokConfigured && userLocale !== item.locale;
+
+  const displayTitle = translated && translatedTitle !== undefined ? translatedTitle : item.title;
+
+  // When showing a translation we always render the full translated body;
+  // otherwise the original full content (when open) or the preview HTML.
+  const bodyHtml =
+    translated && translatedContent !== undefined
+      ? translatedContent
+      : open
+        ? content
+        : item.previewHtml;
 
   // Wire the collapse toggles synchronously after every body (re-)render. Doing
   // this in a layout effect (not gated behind async highlighting) guarantees the
@@ -162,6 +186,40 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
     }
   }, [content, item.id, toast, isAdmin]);
 
+  const handleTranslate = useCallback(async () => {
+    if (translated) {
+      setTranslated(false);
+      return;
+    }
+    // Reuse a previously fetched translation without another round-trip.
+    if (translatedContent !== undefined) {
+      setTranslated(true);
+      setOpen(true);
+      return;
+    }
+    setTranslating(true);
+    try {
+      const data = await api.translateArticle<{
+        enabled: boolean;
+        locale?: string;
+        title?: string;
+        content?: string;
+      }>(item.id, userLocale);
+      if (!data.enabled || data.content === undefined) {
+        toast.error(t("translation.failed"));
+        return;
+      }
+      setTranslatedTitle(data.title);
+      setTranslatedContent(data.content);
+      setTranslated(true);
+      setOpen(true);
+    } catch (err) {
+      toast.error(err instanceof ApiClientError ? err.message : t("translation.failed"));
+    } finally {
+      setTranslating(false);
+    }
+  }, [translated, translatedContent, item.id, userLocale, toast, t]);
+
   const date = new Date(item.publishedAt).toLocaleDateString(item.locale, {
     year: "numeric",
     month: "short",
@@ -219,12 +277,27 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
             )}
           </div>
         </div>
+        {canTranslate && (
+          <button
+            onClick={handleTranslate}
+            disabled={translating}
+            className="mb-2 inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1 text-xs text-muted transition-colors hover:text-accent disabled:opacity-50"
+            title={translated ? t("translation.showOriginal") : t("translation.show")}
+          >
+            <Languages className="h-3.5 w-3.5" />
+            {translating
+              ? t("translation.translating")
+              : translated
+                ? `${t("translation.translated")} ${t("translation.showOriginal")}`
+                : t("translation.show")}
+          </button>
+        )}
         <h2 className="font-heading text-3xl font-bold leading-tight text-fg">
           <a
             href={`/article/${item.slug}`}
             className="transition-colors hover:text-accent"
           >
-            {item.title}
+            {displayTitle}
           </a>
         </h2>
         <p className="mt-1 text-sm text-muted">{date}</p>

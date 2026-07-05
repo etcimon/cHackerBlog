@@ -13,6 +13,7 @@ import { useToast } from "@/components/toast";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { siteSettingsSchema, type SiteSettingsInput } from "@/lib/schemas";
+import { SUPPORTED_LOCALES } from "@/lib/i18n";
 
 export function AdminBar({ onNewArticle }: { onNewArticle: () => void }) {
   const { isAdmin, ready, login, logout } = useAdmin();
@@ -37,6 +38,8 @@ export function AdminBar({ onNewArticle }: { onNewArticle: () => void }) {
       title: "",
       description: "",
       socialAutopost: false,
+      defaultLocale: "en",
+      translationMode: "default",
     },
   });
 
@@ -95,6 +98,8 @@ export function AdminBar({ onNewArticle }: { onNewArticle: () => void }) {
         xHandle: settings.xHandle || "",
         linkedinUrl: settings.linkedinUrl || "",
         socialAutopost: settings.socialAutopost || false,
+        defaultLocale: settings.defaultLocale || "en",
+        translationMode: settings.translationMode || "default",
       });
     } catch (err) {
       toast.error(err instanceof ApiClientError ? err.message : "Failed to load settings");
@@ -302,6 +307,34 @@ export function AdminBar({ onNewArticle }: { onNewArticle: () => void }) {
                     <input type="checkbox" {...register("socialAutopost")} className="accent-accent" />
                     Auto-post new articles to X and LinkedIn
                   </label>
+                </div>
+
+                <div className="space-y-3">
+                  <h4 className="font-heading text-sm font-semibold text-accent">Language</h4>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-sm text-muted">Default language</label>
+                      <select {...register("defaultLocale")} className="w-full rounded border border-border bg-bg px-3 py-2 text-fg outline-none focus:border-accent">
+                        {SUPPORTED_LOCALES.map((l) => (
+                          <option key={l.code} value={l.code}>
+                            {l.label} ({l.nativeName})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm text-muted">Translation mode</label>
+                      <select {...register("translationMode")} className="w-full rounded border border-border bg-bg px-3 py-2 text-fg outline-none focus:border-accent">
+                        <option value="default">Default language only</option>
+                        <option value="user-specific">User-specific (per-visitor)</option>
+                      </select>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted">
+                    Visitors can switch languages via the footer selector, which
+                    uses <code>/[lang]/…</code> URLs. In <code>user-specific</code>
+                    mode the UI language follows the browser automatically.
+                  </p>
                 </div>
 
                 <button

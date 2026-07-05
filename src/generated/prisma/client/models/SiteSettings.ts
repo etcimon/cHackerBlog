@@ -48,6 +48,8 @@ export type SiteSettingsMinAggregateOutputType = {
   xHandle: string | null
   linkedinUrl: string | null
   socialAutopost: boolean | null
+  defaultLocale: string | null
+  translationMode: string | null
   createdAt: Date | null
   updatedAt: Date | null
 }
@@ -65,6 +67,8 @@ export type SiteSettingsMaxAggregateOutputType = {
   xHandle: string | null
   linkedinUrl: string | null
   socialAutopost: boolean | null
+  defaultLocale: string | null
+  translationMode: string | null
   createdAt: Date | null
   updatedAt: Date | null
 }
@@ -82,6 +86,8 @@ export type SiteSettingsCountAggregateOutputType = {
   xHandle: number
   linkedinUrl: number
   socialAutopost: number
+  defaultLocale: number
+  translationMode: number
   createdAt: number
   updatedAt: number
   _all: number
@@ -109,6 +115,8 @@ export type SiteSettingsMinAggregateInputType = {
   xHandle?: true
   linkedinUrl?: true
   socialAutopost?: true
+  defaultLocale?: true
+  translationMode?: true
   createdAt?: true
   updatedAt?: true
 }
@@ -126,6 +134,8 @@ export type SiteSettingsMaxAggregateInputType = {
   xHandle?: true
   linkedinUrl?: true
   socialAutopost?: true
+  defaultLocale?: true
+  translationMode?: true
   createdAt?: true
   updatedAt?: true
 }
@@ -143,6 +153,8 @@ export type SiteSettingsCountAggregateInputType = {
   xHandle?: true
   linkedinUrl?: true
   socialAutopost?: true
+  defaultLocale?: true
+  translationMode?: true
   createdAt?: true
   updatedAt?: true
   _all?: true
@@ -247,6 +259,8 @@ export type SiteSettingsGroupByOutputType = {
   xHandle: string | null
   linkedinUrl: string | null
   socialAutopost: boolean
+  defaultLocale: string
+  translationMode: string
   createdAt: Date
   updatedAt: Date
   _count: SiteSettingsCountAggregateOutputType | null
@@ -287,6 +301,8 @@ export type SiteSettingsWhereInput = {
   xHandle?: Prisma.StringNullableFilter<"SiteSettings"> | string | null
   linkedinUrl?: Prisma.StringNullableFilter<"SiteSettings"> | string | null
   socialAutopost?: Prisma.BoolFilter<"SiteSettings"> | boolean
+  defaultLocale?: Prisma.StringFilter<"SiteSettings"> | string
+  translationMode?: Prisma.StringFilter<"SiteSettings"> | string
   createdAt?: Prisma.DateTimeFilter<"SiteSettings"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"SiteSettings"> | Date | string
 }
@@ -304,6 +320,8 @@ export type SiteSettingsOrderByWithRelationInput = {
   xHandle?: Prisma.SortOrderInput | Prisma.SortOrder
   linkedinUrl?: Prisma.SortOrderInput | Prisma.SortOrder
   socialAutopost?: Prisma.SortOrder
+  defaultLocale?: Prisma.SortOrder
+  translationMode?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
 }
@@ -324,6 +342,8 @@ export type SiteSettingsWhereUniqueInput = Prisma.AtLeast<{
   xHandle?: Prisma.StringNullableFilter<"SiteSettings"> | string | null
   linkedinUrl?: Prisma.StringNullableFilter<"SiteSettings"> | string | null
   socialAutopost?: Prisma.BoolFilter<"SiteSettings"> | boolean
+  defaultLocale?: Prisma.StringFilter<"SiteSettings"> | string
+  translationMode?: Prisma.StringFilter<"SiteSettings"> | string
   createdAt?: Prisma.DateTimeFilter<"SiteSettings"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"SiteSettings"> | Date | string
 }, "id">
@@ -341,6 +361,8 @@ export type SiteSettingsOrderByWithAggregationInput = {
   xHandle?: Prisma.SortOrderInput | Prisma.SortOrder
   linkedinUrl?: Prisma.SortOrderInput | Prisma.SortOrder
   socialAutopost?: Prisma.SortOrder
+  defaultLocale?: Prisma.SortOrder
+  translationMode?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
   _count?: Prisma.SiteSettingsCountOrderByAggregateInput
@@ -366,6 +388,8 @@ export type SiteSettingsScalarWhereWithAggregatesInput = {
   xHandle?: Prisma.StringNullableWithAggregatesFilter<"SiteSettings"> | string | null
   linkedinUrl?: Prisma.StringNullableWithAggregatesFilter<"SiteSettings"> | string | null
   socialAutopost?: Prisma.BoolWithAggregatesFilter<"SiteSettings"> | boolean
+  defaultLocale?: Prisma.StringWithAggregatesFilter<"SiteSettings"> | string
+  translationMode?: Prisma.StringWithAggregatesFilter<"SiteSettings"> | string
   createdAt?: Prisma.DateTimeWithAggregatesFilter<"SiteSettings"> | Date | string
   updatedAt?: Prisma.DateTimeWithAggregatesFilter<"SiteSettings"> | Date | string
 }
@@ -383,6 +407,8 @@ export type SiteSettingsCreateInput = {
   xHandle?: string | null
   linkedinUrl?: string | null
   socialAutopost?: boolean
+  defaultLocale?: string
+  translationMode?: string
   createdAt?: Date | string
   updatedAt?: Date | string
 }
@@ -400,6 +426,8 @@ export type SiteSettingsUncheckedCreateInput = {
   xHandle?: string | null
   linkedinUrl?: string | null
   socialAutopost?: boolean
+  defaultLocale?: string
+  translationMode?: string
   createdAt?: Date | string
   updatedAt?: Date | string
 }
@@ -417,6 +445,8 @@ export type SiteSettingsUpdateInput = {
   xHandle?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   linkedinUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   socialAutopost?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  defaultLocale?: Prisma.StringFieldUpdateOperationsInput | string
+  translationMode?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -434,6 +464,8 @@ export type SiteSettingsUncheckedUpdateInput = {
   xHandle?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   linkedinUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   socialAutopost?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  defaultLocale?: Prisma.StringFieldUpdateOperationsInput | string
+  translationMode?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -451,6 +483,8 @@ export type SiteSettingsCreateManyInput = {
   xHandle?: string | null
   linkedinUrl?: string | null
   socialAutopost?: boolean
+  defaultLocale?: string
+  translationMode?: string
   createdAt?: Date | string
   updatedAt?: Date | string
 }
@@ -468,6 +502,8 @@ export type SiteSettingsUpdateManyMutationInput = {
   xHandle?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   linkedinUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   socialAutopost?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  defaultLocale?: Prisma.StringFieldUpdateOperationsInput | string
+  translationMode?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -485,6 +521,8 @@ export type SiteSettingsUncheckedUpdateManyInput = {
   xHandle?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   linkedinUrl?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   socialAutopost?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  defaultLocale?: Prisma.StringFieldUpdateOperationsInput | string
+  translationMode?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -502,6 +540,8 @@ export type SiteSettingsCountOrderByAggregateInput = {
   xHandle?: Prisma.SortOrder
   linkedinUrl?: Prisma.SortOrder
   socialAutopost?: Prisma.SortOrder
+  defaultLocale?: Prisma.SortOrder
+  translationMode?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
 }
@@ -523,6 +563,8 @@ export type SiteSettingsMaxOrderByAggregateInput = {
   xHandle?: Prisma.SortOrder
   linkedinUrl?: Prisma.SortOrder
   socialAutopost?: Prisma.SortOrder
+  defaultLocale?: Prisma.SortOrder
+  translationMode?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
 }
@@ -540,6 +582,8 @@ export type SiteSettingsMinOrderByAggregateInput = {
   xHandle?: Prisma.SortOrder
   linkedinUrl?: Prisma.SortOrder
   socialAutopost?: Prisma.SortOrder
+  defaultLocale?: Prisma.SortOrder
+  translationMode?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
 }
@@ -587,6 +631,8 @@ export type SiteSettingsSelect<ExtArgs extends runtime.Types.Extensions.Internal
   xHandle?: boolean
   linkedinUrl?: boolean
   socialAutopost?: boolean
+  defaultLocale?: boolean
+  translationMode?: boolean
   createdAt?: boolean
   updatedAt?: boolean
 }, ExtArgs["result"]["siteSettings"]>
@@ -604,6 +650,8 @@ export type SiteSettingsSelectCreateManyAndReturn<ExtArgs extends runtime.Types.
   xHandle?: boolean
   linkedinUrl?: boolean
   socialAutopost?: boolean
+  defaultLocale?: boolean
+  translationMode?: boolean
   createdAt?: boolean
   updatedAt?: boolean
 }, ExtArgs["result"]["siteSettings"]>
@@ -621,6 +669,8 @@ export type SiteSettingsSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.
   xHandle?: boolean
   linkedinUrl?: boolean
   socialAutopost?: boolean
+  defaultLocale?: boolean
+  translationMode?: boolean
   createdAt?: boolean
   updatedAt?: boolean
 }, ExtArgs["result"]["siteSettings"]>
@@ -638,11 +688,13 @@ export type SiteSettingsSelectScalar = {
   xHandle?: boolean
   linkedinUrl?: boolean
   socialAutopost?: boolean
+  defaultLocale?: boolean
+  translationMode?: boolean
   createdAt?: boolean
   updatedAt?: boolean
 }
 
-export type SiteSettingsOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "setupComplete" | "title" | "description" | "faviconUrl" | "coverUrl" | "authorName" | "authorThumbUrl" | "headHtml" | "xHandle" | "linkedinUrl" | "socialAutopost" | "createdAt" | "updatedAt", ExtArgs["result"]["siteSettings"]>
+export type SiteSettingsOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "setupComplete" | "title" | "description" | "faviconUrl" | "coverUrl" | "authorName" | "authorThumbUrl" | "headHtml" | "xHandle" | "linkedinUrl" | "socialAutopost" | "defaultLocale" | "translationMode" | "createdAt" | "updatedAt", ExtArgs["result"]["siteSettings"]>
 
 export type $SiteSettingsPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   name: "SiteSettings"
@@ -660,6 +712,8 @@ export type $SiteSettingsPayload<ExtArgs extends runtime.Types.Extensions.Intern
     xHandle: string | null
     linkedinUrl: string | null
     socialAutopost: boolean
+    defaultLocale: string
+    translationMode: string
     createdAt: Date
     updatedAt: Date
   }, ExtArgs["result"]["siteSettings"]>
@@ -1097,6 +1151,8 @@ export interface SiteSettingsFieldRefs {
   readonly xHandle: Prisma.FieldRef<"SiteSettings", 'String'>
   readonly linkedinUrl: Prisma.FieldRef<"SiteSettings", 'String'>
   readonly socialAutopost: Prisma.FieldRef<"SiteSettings", 'Boolean'>
+  readonly defaultLocale: Prisma.FieldRef<"SiteSettings", 'String'>
+  readonly translationMode: Prisma.FieldRef<"SiteSettings", 'String'>
   readonly createdAt: Prisma.FieldRef<"SiteSettings", 'DateTime'>
   readonly updatedAt: Prisma.FieldRef<"SiteSettings", 'DateTime'>
 }

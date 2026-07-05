@@ -204,6 +204,28 @@ Write-Host "Generated SESSION_SECRET: $sessionSecret" -ForegroundColor Green
 $adminPassword = Read-Host "Admin password [changeme]"
 if ([string]::IsNullOrWhiteSpace($adminPassword)) { $adminPassword = "changeme" }
 
+# Prompt for i18n
+$disableI18n = Read-Host "Disable internationalization (i18n)? (y/N) [N]"
+if ($disableI18n -eq "y" -or $disableI18n -eq "Y") {
+    $disableI18nValue = "true"
+    Write-Host "i18n disabled" -ForegroundColor Yellow
+} else {
+    $disableI18nValue = "false"
+    Write-Host "i18n enabled" -ForegroundColor Green
+}
+
+# Prompt for Grok configuration
+$grokApiKey = Read-Host "Grok API key for translation (optional, press Enter to skip)"
+if (-not [string]::IsNullOrWhiteSpace($grokApiKey)) {
+    $grokModel = Read-Host "Grok model [grok-4.3]"
+    if ([string]::IsNullOrWhiteSpace($grokModel)) { $grokModel = "grok-4.3" }
+    Write-Host "Grok translation configured with model: $grokModel" -ForegroundColor Green
+} else {
+    $grokApiKey = ""
+    $grokModel = "grok-4.3"
+    Write-Host "Grok translation not configured" -ForegroundColor Yellow
+}
+
 # Replace values in .env content
 $envContent = $envContent -replace 'NODE_ENV=development', "NODE_ENV=$envType"
 $envContent = $envContent -replace 'APP_URL=http://localhost:3000', "APP_URL=$appUrl"
@@ -214,6 +236,9 @@ $envContent = $envContent -replace 'REDIS_URL=redis://localhost:6379', "REDIS_UR
 $envContent = $envContent -replace 'SESSION_SECRET=replace-with-a-long-random-string', "SESSION_SECRET=$sessionSecret"
 $envContent = $envContent -replace 'ADMIN_PASSWORD=changeme', "ADMIN_PASSWORD=$adminPassword"
 $envContent = $envContent -replace '^LOG_LEVEL=.*', 'LOG_LEVEL=error'
+$envContent = $envContent -replace 'DISABLE_I18N=false', "DISABLE_I18N=$disableI18nValue"
+$envContent = $envContent -replace 'GROK_API_KEY=', "GROK_API_KEY=$grokApiKey"
+$envContent = $envContent -replace 'GROK_MODEL=grok-4.3', "GROK_MODEL=$grokModel"
 
 # Write .env file
 $envContent | Out-File -FilePath ".env" -Encoding UTF8 -NoNewline

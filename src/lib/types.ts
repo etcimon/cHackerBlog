@@ -47,6 +47,14 @@ export interface PublicSettings {
   xHandle: string | null;
   linkedinUrl: string | null;
   socialAutopost: boolean;
+  /** Site default language (one of the supported locale codes). */
+  defaultLocale: string;
+  /** "default" or "user-specific" (enables the "show translation" affordance). */
+  translationMode: "default" | "user-specific";
+  /** Whether the Grok translation integration is configured/usable. */
+  grokConfigured: boolean;
+  /** i18n kill-switch: force English + hide the language switcher (DISABLE_I18N). */
+  i18nDisabled: boolean;
 }
 
 export interface TagItem {

@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-cHackerBlog is a self-hosted, themable blogging platform built with Next.js 15, TypeScript, Bun, Prisma ORM, and Redis. It features infinite scroll, WYSIWYG editing, comment moderation, and social auto-posting.
+cHackerBlog is a self-hosted, themable blogging platform built with Next.js 15, TypeScript, Bun, Prisma ORM, and Redis. It features infinite scroll, WYSIWYG editing, comment moderation, social auto-posting, internationalization (i18n) with 10 built-in locales, and on-demand article translation via Grok (x.ai).
 
 ## Architecture Layers
 
@@ -19,6 +19,8 @@ cHackerBlog is a self-hosted, themable blogging platform built with Next.js 15, 
 - `src/lib/articles.ts` - Article CRUD, feed pagination, tag management
 - `src/lib/settings.ts` - Site settings CRUD operations
 - `src/lib/errors.ts` - Unified error envelope
+- `src/lib/i18n.ts` - Internationalization utilities (locale resolution, path building, translation cache)
+- `src/lib/grok.ts` - Grok (x.ai) API client for article translation
 
 ### Layer 3: Social Integrations
 - `src/lib/social/index.ts` - Social auto-posting coordinator
@@ -29,6 +31,7 @@ cHackerBlog is a self-hosted, themable blogging platform built with Next.js 15, 
 - `src/app/api/auth/` - Admin authentication
 - `src/app/api/feed/` - Cursor-paginated feed with tag/locale filtering
 - `src/app/api/articles/` - Article CRUD operations
+- `src/app/api/articles/[id]/translate/` - Article translation via Grok
 - `src/app/api/comments/` - Comment CRUD with moderation
 - `src/app/api/settings/` - Site settings (GET public, PUT admin)
 - `src/app/api/upload/` - Admin image upload
@@ -37,15 +40,20 @@ cHackerBlog is a self-hosted, themable blogging platform built with Next.js 15, 
 ### Layer 5: Client Components
 - `src/components/providers.tsx` - Theme and context providers
 - `src/components/feed.tsx` - Infinite scroll feed with prefetching
-- `src/components/article-card.tsx` - Article display with in-place expansion
+- `src/components/article-card.tsx` - Article display with in-place expansion and translation toggle
 - `src/components/article-editor.tsx` - Article creation/editing form
 - `src/components/wysiwyg.tsx` - WYSIWYG editor with markdown preview
-- `src/components/admin-bar.tsx` - Floating admin controls
+- `src/components/admin-bar.tsx` - Floating admin controls with language settings
+- `src/components/language-switcher.tsx` - Language dropdown for locale selection
 - `src/components/api-client.ts` - API client with error handling
+- `src/lib/use-i18n.ts` - Client i18n hook for locale resolution and translations
+- `src/lib/use-site-config.ts` - Client config hook for site settings
 
 ### Layer 6: Pages
 - `src/app/layout.tsx` - Root layout with theme injection
 - `src/app/page.tsx` - Home feed with masthead
+- `src/app/[lang]/page.tsx` - Localized home feed
+- `src/app/[lang]/article/[slug]/page.tsx` - Localized article page
 - `src/app/setup/page.tsx` - First-run setup screen
 
 ## Key Files
@@ -106,5 +114,12 @@ Required variables in `.env`:
 - `REDIS_URL` - Redis connection string
 - `SESSION_SECRET` - Session cookie signing secret
 - `ADMIN_PASSWORD` - Admin password (or `ADMIN_PASSWORD_HASH`)
+
+Optional variables include:
+- `DISABLE_I18N` - Disable UI localization (force English-only)
+- `GROK_API_KEY` - x.ai API key for article translation
+- `GROK_BASE_URL` - x.ai API endpoint (default: `https://api.x.ai/v1`)
+- `GROK_MODEL` - Model name (default: `grok-4.3`)
+- `GROK_TEMPERATURE` - Sampling temperature (default: `0.2`)
 
 See `.env.example` for full configuration options including theme, rate limiting, and social integrations.

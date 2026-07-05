@@ -202,6 +202,28 @@ echo -e "${GREEN}Generated SESSION_SECRET: $session_secret${NC}"
 read -p "Admin password [changeme]: " admin_password
 admin_password=${admin_password:-changeme}
 
+# Prompt for i18n
+read -p "Disable internationalization (i18n)? (y/N) [N]: " disable_i18n
+if [[ "$disable_i18n" =~ ^[Yy]$ ]]; then
+    disable_i18n_value="true"
+    echo -e "${YELLOW}i18n disabled${NC}"
+else
+    disable_i18n_value="false"
+    echo -e "${GREEN}i18n enabled${NC}"
+fi
+
+# Prompt for Grok configuration
+read -p "Grok API key for translation (optional, press Enter to skip): " grok_api_key
+if [ -n "$grok_api_key" ]; then
+    read -p "Grok model [grok-4.3]: " grok_model
+    grok_model=${grok_model:-grok-4.3}
+    echo -e "${GREEN}Grok translation configured with model: $grok_model${NC}"
+else
+    grok_api_key=""
+    grok_model="grok-4.3"
+    echo -e "${YELLOW}Grok translation not configured${NC}"
+fi
+
 # Replace values in .env content
 env_content=$(echo "$env_content" | sed "s/NODE_ENV=development/NODE_ENV=$env_type/")
 env_content=$(echo "$env_content" | sed "s|APP_URL=http://localhost:3000|APP_URL=$app_url|")
@@ -212,6 +234,9 @@ env_content=$(echo "$env_content" | sed "s|REDIS_URL=redis://localhost:6379|REDI
 env_content=$(echo "$env_content" | sed "s/SESSION_SECRET=replace-with-a-long-random-string/SESSION_SECRET=$session_secret/")
 env_content=$(echo "$env_content" | sed "s/ADMIN_PASSWORD=changeme/ADMIN_PASSWORD=$admin_password/")
 env_content=$(echo "$env_content" | sed "s/^LOG_LEVEL=.*/LOG_LEVEL=error/")
+env_content=$(echo "$env_content" | sed "s/DISABLE_I18N=false/DISABLE_I18N=$disable_i18n_value/")
+env_content=$(echo "$env_content" | sed "s/GROK_API_KEY=/GROK_API_KEY=$grok_api_key/")
+env_content=$(echo "$env_content" | sed "s/GROK_MODEL=grok-4.3/GROK_MODEL=$grok_model/")
 
 # Write .env file
 echo "$env_content" > .env

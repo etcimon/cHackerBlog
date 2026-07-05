@@ -53,6 +53,7 @@ export const AnyNull = runtime.AnyNull
 export const ModelName = {
   SiteSettings: 'SiteSettings',
   Article: 'Article',
+  ArticleTranslation: 'ArticleTranslation',
   Tag: 'Tag',
   Comment: 'Comment'
 } as const
@@ -83,6 +84,8 @@ export const SiteSettingsScalarFieldEnum = {
   xHandle: 'xHandle',
   linkedinUrl: 'linkedinUrl',
   socialAutopost: 'socialAutopost',
+  defaultLocale: 'defaultLocale',
+  translationMode: 'translationMode',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'
 } as const
@@ -109,6 +112,20 @@ export const ArticleScalarFieldEnum = {
 } as const
 
 export type ArticleScalarFieldEnum = (typeof ArticleScalarFieldEnum)[keyof typeof ArticleScalarFieldEnum]
+
+
+export const ArticleTranslationScalarFieldEnum = {
+  id: 'id',
+  articleId: 'articleId',
+  locale: 'locale',
+  sourceLocale: 'sourceLocale',
+  title: 'title',
+  content: 'content',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type ArticleTranslationScalarFieldEnum = (typeof ArticleTranslationScalarFieldEnum)[keyof typeof ArticleTranslationScalarFieldEnum]
 
 
 export const TagScalarFieldEnum = {

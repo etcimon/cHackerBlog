@@ -117,4 +117,9 @@ export const api = {
   del: <T>(url: string) => request<T>(url, { method: "DELETE" }),
   pinArticle: <T>(articleId: string) => request<T>(`/api/articles/${articleId}/pin`, { method: "POST" }),
   unpinArticle: <T>(articleId: string) => request<T>(`/api/articles/${articleId}/pin`, { method: "DELETE" }),
+  translateArticle: <T>(articleId: string, locale: string) =>
+    request<T>(`/api/articles/${articleId}/translate`, {
+      method: "POST",
+      body: JSON.stringify({ locale }),
+    }),
 };

@@ -1,0 +1,28 @@
+{
+  "locale": "العربية",
+  "common": {
+    "home": "الرئيسية",
+    "search": "بحث",
+    "tags": "الوسوم",
+    "readMore": "اقرأ المزيد",
+    "fullText": "النص الكامل",
+    "loading": "جارٍ التحميل…",
+    "edit": "تعديل",
+    "pinned": "مثبّت",
+    "unpublished": "غير منشور",
+    "back": "رجوع"
+  },
+  "translation": {
+    "show": "عرض الترجمة",
+    "showOriginal": "عرض الأصل",
+    "translated": "(مترجم)",
+    "translating": "جارٍ الترجمة…",
+    "failed": "فشلت الترجمة"
+  },
+  "comments": {
+    "title": "التعليقات",
+    "post": "أضف تعليقًا",
+    "placeholder": "اكتب تعليقًا…",
+    "empty": "لا توجد تعليقات بعد. كن أول من يعلّق."
+  }
+}

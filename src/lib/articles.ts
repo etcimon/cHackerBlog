@@ -11,6 +11,7 @@ import { truncateContent } from "@/lib/types";
 import { extractPreviewHtml } from "@/lib/embeds";
 import { deriveSeo } from "@/lib/seo";
 import { getSettings } from "@/lib/settings";
+import { invalidateArticleTranslations } from "@/lib/grok";
 
 function slugify(input: string): string {
   return input
@@ -221,6 +222,25 @@ export async function getArticleBody(
   });
 }
 
+/**
+ * Fetch the fields needed to produce a translation: source title, body HTML and
+ * locale. Published-only for the public translate endpoint; admins may pass
+ * includeUnpublished to translate drafts.
+ */
+export async function getArticleTranslationSource(
+  id: string,
+  opts: { includeUnpublished?: boolean } = {},
+): Promise<{ id: string; title: string; content: string; locale: string } | null> {
+  const prisma = getPrisma();
+  const a = await prisma.article.findUnique({
+    where: { id },
+    select: { id: true, title: true, content: true, locale: true, published: true },
+  });
+  if (!a) return null;
+  if (!a.published && !opts.includeUnpublished) return null;
+  return { id: a.id, title: a.title, content: a.content, locale: a.locale };
+}
+
 async function connectTags(names: string[]) {
   const prisma = getPrisma();
   const unique = Array.from(new Set(names.map((n) => n.trim()).filter(Boolean)));
@@ -328,6 +348,8 @@ export async function updateArticle(id: string, input: ArticleInput) {
   });
   await invalidate("article", id);
   await invalidate("feed");
+  // Content changed: drop stale translations (cache + persisted rows).
+  await invalidateArticleTranslations(id);
   return article;
 }
 
@@ -351,6 +373,8 @@ export async function deleteArticle(id: string) {
   await prisma.article.delete({ where: { id } });
   await invalidate("article", id);
   await invalidate("feed");
+  // Persisted translations cascade-delete with the article; clear their cache.
+  await invalidateArticleTranslations(id);
 }
 
 export async function listAllTags() {

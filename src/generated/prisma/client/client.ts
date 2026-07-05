@@ -54,6 +54,15 @@ export type SiteSettings = Prisma.SiteSettingsModel
  */
 export type Article = Prisma.ArticleModel
 /**
+ * Model ArticleTranslation
+ * A cached/persisted machine translation of an article into a target locale.
+ * Produced on demand by lib/grok.ts. `content` stores translated HTML (the
+ * canonical body representation), `title` the translated title. Exactly one
+ * row per (article, locale). Cascade-deleted with the source article and
+ * wiped on source edits so a stale revision is never served.
+ */
+export type ArticleTranslation = Prisma.ArticleTranslationModel
+/**
  * Model Tag
  * Tags listed at the top of the feed and on each article header.
  */

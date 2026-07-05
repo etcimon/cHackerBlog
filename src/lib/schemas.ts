@@ -4,8 +4,22 @@
  * validation). Keeping them here prevents client/server drift.
  */
 import { z } from "zod";
+import { SUPPORTED_LOCALE_CODES } from "@/lib/i18n";
 
 export const localeSchema = z.string().min(2).max(10).default("en");
+
+/** Site default language: one of the supported locale codes. */
+export const defaultLocaleSchema = z.enum(SUPPORTED_LOCALE_CODES).default("en");
+
+/**
+ * How the site chooses the display language:
+ *  - "default":       always the configured default locale.
+ *  - "user-specific": negotiate from the visitor's browser and expose the
+ *                     Grok-powered "show translation" affordance on articles.
+ */
+export const translationModeSchema = z
+  .enum(["default", "user-specific"])
+  .default("default");
 
 /** First-run setup + global settings form. */
 export const siteSettingsSchema = z.object({
@@ -19,6 +33,8 @@ export const siteSettingsSchema = z.object({
   xHandle: z.string().max(120).optional().or(z.literal("")),
   linkedinUrl: z.string().url().optional().or(z.literal("")),
   socialAutopost: z.boolean().default(false),
+  defaultLocale: defaultLocaleSchema,
+  translationMode: translationModeSchema,
 });
 export type SiteSettingsInput = z.infer<typeof siteSettingsSchema>;
 

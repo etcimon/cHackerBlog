@@ -18,6 +18,7 @@
 - [Project Goals](#project-goals)
 - [Features](#features)
 - [SEO & Sharing](#seo--sharing)
+- [Internationalization & Translation](#internationalization--translation)
 - [Tech Stack](#tech-stack)
 - [Architecture](#architecture)
 - [Quick Start](#quick-start)
@@ -48,7 +49,8 @@ cHackerBlog is designed as a modern, performant blogging platform that prioritiz
 - **WYSIWYG Editor:** Rich text editing with live markdown preview and image uploads
 - **Infinite Scroll:** Smooth, performant feed with configurable page sizes and prefetching
 - **Article Pinning:** Pin important articles to the top of the feed with most-recent-first ordering
-- **Multi-language Support:** Locale-aware article management
+- **Internationalization (i18n):** 10 built-in UI locales, `/[lang]/…` URL routing, and per-visitor language negotiation
+- **On-demand Translation:** Optional Grok (x.ai) powered article translation with cached/persisted results
 - **Tag System:** Flexible tagging with tag filtering on the feed
 
 ### User Experience
@@ -67,6 +69,31 @@ cHackerBlog is designed as a modern, performant blogging platform that prioritiz
 ## SEO & Sharing
 
 Every article is reachable through a canonical, crawlable slug path at `/article/<slug>`. This server route emits per-article Open Graph, Twitter Card, and canonical `<meta>` tags derived from auto-generated SEO fields (`seoKeywords`, `seoDescription`, `thumbnailUrl`), so social crawlers — which run no JavaScript — receive a correct title, description, and preview image without any API keys or authentication. Rather than rendering each article in isolation, the slug route locates the target article within a tag-scoped feed slice and hands it to the feed, which appends a `#<slug>-top` hash and smooth-scrolls the reader to the article's top anchor once the DOM is fully rendered. Social sharing is entirely URL-based: the share modal builds credential-free intent links for X, Facebook, LinkedIn, Reddit, WhatsApp, Telegram, and Email (plus copy-link and the native device share sheet), all pointing at the canonical slug URL.
+
+## Internationalization & Translation
+
+cHackerBlog supports a 10-locale UI with a `/[lang]/...` URL scheme and optional on-demand article translation via Grok (x.ai).
+
+### UI Localization
+
+- **Built-in locales:** English, Spanish, Chinese (Simplified), Hindi, Arabic, Portuguese, French, Russian, German, Japanese.
+- **Language routing:** `/[lang]/` and `/[lang]/article/[slug]` URLs (e.g., `/fr`, `/ja/article/my-post`) select the UI language. The site default locale yields clean, unprefixed URLs (`/`, `/article/x`).
+- **Footer selector:** A language dropdown rewrites the current path to the chosen locale.
+- **Settings policy:** Admins configure the site default language and a translation mode (`default` vs. `user-specific`). In `user-specific` mode, the UI language follows the visitor's browser preferences unless overridden by the URL prefix.
+- **Kill-switch:** Set `DISABLE_I18N=true` to force English-only, hide the language switcher, and disable the `/[lang]/...` routes (404). Article-level Grok translation remains unaffected.
+
+### On-Demand Article Translation
+
+When a Grok API key is configured (`GROK_API_KEY`), article cards show a "show translation" button when the visitor's resolved locale differs from the article's language. Clicking translates the title and body via Grok, with results cached in Redis and persisted to the `ArticleTranslation` table. Content is translated as Markdown to preserve structure (code blocks, embeds, the `--END PREVIEW--` marker), then rendered back to HTML.
+
+**Configuration:**
+- `GROK_API_KEY` — Your x.ai API key.
+- `GROK_BASE_URL` — x.ai endpoint (default: `https://api.x.ai/v1`).
+- `GROK_MODEL` — Model name (default: `grok-4.3`; `grok-2-latest` is deprecated and returns HTTP 400).
+- `GROK_TEMPERATURE` — Sampling temperature (default: `0.2`).
+- `GROK_TRANSLATION_PROMPT` / `GROK_TITLE_PROMPT` — Tunable prompt templates with placeholders `{sourceLang} {targetLang} {sourceLocale} {targetLocale} {content}`.
+
+**API endpoint:** `POST /api/articles/[id]/translate` with `{ locale }` returns `{ enabled, locale, title, content }`. Upstream Grok errors surface as HTTP 502 with the real reason (e.g., invalid model or key).
 
 ## Custom Markdown Embedding
 
@@ -579,6 +606,27 @@ UPLOAD_MAX_SIZE=200M                   # Max upload size (supports K, M, G suffi
 COMMENTS_ENABLED=true                   # Enable/disable commenting
 ```
 
+### Grok Translation Configuration (Optional)
+
+```env
+GROK_API_KEY=your_xai_api_key           # x.ai API key for translation
+GROK_BASE_URL=https://api.x.ai/v1       # x.ai API endpoint
+GROK_MODEL=grok-4.3                      # Model name (grok-4.3 recommended)
+GROK_TEMPERATURE=0.2                    # Sampling temperature (0-1)
+GROK_TRANSLATION_PROMPT="Translate the following {sourceLang} article to {targetLang}..."  # Translation prompt template
+GROK_TITLE_PROMPT="Translate this title from {sourceLang} to {targetLang}: {content}"       # Title prompt template
+```
+
+**Note:** The `grok-2-latest` model is deprecated and will return HTTP 400 errors. Use `grok-4.3` or a current model name.
+
+### Internationalization Configuration
+
+```env
+DISABLE_I18N=false                      # Disable UI localization (force English-only)
+```
+
+When `DISABLE_I18N=true`, the language switcher is hidden, `/[lang]/...` routes return 404, and the UI defaults to English. Article-level Grok translation remains available if configured.
+
 ## Development
 
 ### Available Scripts
@@ -906,6 +954,30 @@ Response:
 **POST `/api/articles/[id]/pin`** - Pin article (admin only)
 
 **DELETE `/api/articles/[id]/pin`** - Unpin article (admin only)
+
+**POST `/api/articles/[id]/translate`** - Translate article (admin only)
+
+Request body:
+```json
+{
+  "locale": "fr"
+}
+```
+
+Response:
+```json
+{
+  "ok": true,
+  "data": {
+    "enabled": true,
+    "locale": "fr",
+    "title": "Translated Title",
+    "content": "Translated content..."
+  }
+}
+```
+
+If Grok is not configured or the request fails, returns HTTP 502 with the error details.
 
 ### Comments API
 

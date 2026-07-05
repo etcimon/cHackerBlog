@@ -386,6 +386,7 @@ type FieldRefInputType<Model, FieldType> = Model extends never ? never : FieldRe
 export const ModelName = {
   SiteSettings: 'SiteSettings',
   Article: 'Article',
+  ArticleTranslation: 'ArticleTranslation',
   Tag: 'Tag',
   Comment: 'Comment'
 } as const
@@ -403,7 +404,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "siteSettings" | "article" | "tag" | "comment"
+    modelProps: "siteSettings" | "article" | "articleTranslation" | "tag" | "comment"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -552,6 +553,80 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         count: {
           args: Prisma.ArticleCountArgs<ExtArgs>
           result: runtime.Types.Utils.Optional<Prisma.ArticleCountAggregateOutputType> | number
+        }
+      }
+    }
+    ArticleTranslation: {
+      payload: Prisma.$ArticleTranslationPayload<ExtArgs>
+      fields: Prisma.ArticleTranslationFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.ArticleTranslationFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$ArticleTranslationPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.ArticleTranslationFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$ArticleTranslationPayload>
+        }
+        findFirst: {
+          args: Prisma.ArticleTranslationFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$ArticleTranslationPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.ArticleTranslationFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$ArticleTranslationPayload>
+        }
+        findMany: {
+          args: Prisma.ArticleTranslationFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$ArticleTranslationPayload>[]
+        }
+        create: {
+          args: Prisma.ArticleTranslationCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$ArticleTranslationPayload>
+        }
+        createMany: {
+          args: Prisma.ArticleTranslationCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.ArticleTranslationCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$ArticleTranslationPayload>[]
+        }
+        delete: {
+          args: Prisma.ArticleTranslationDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$ArticleTranslationPayload>
+        }
+        update: {
+          args: Prisma.ArticleTranslationUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$ArticleTranslationPayload>
+        }
+        deleteMany: {
+          args: Prisma.ArticleTranslationDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.ArticleTranslationUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.ArticleTranslationUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$ArticleTranslationPayload>[]
+        }
+        upsert: {
+          args: Prisma.ArticleTranslationUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$ArticleTranslationPayload>
+        }
+        aggregate: {
+          args: Prisma.ArticleTranslationAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateArticleTranslation>
+        }
+        groupBy: {
+          args: Prisma.ArticleTranslationGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.ArticleTranslationGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.ArticleTranslationCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.ArticleTranslationCountAggregateOutputType> | number
         }
       }
     }
@@ -752,6 +827,8 @@ export const SiteSettingsScalarFieldEnum = {
   xHandle: 'xHandle',
   linkedinUrl: 'linkedinUrl',
   socialAutopost: 'socialAutopost',
+  defaultLocale: 'defaultLocale',
+  translationMode: 'translationMode',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'
 } as const
@@ -778,6 +855,20 @@ export const ArticleScalarFieldEnum = {
 } as const
 
 export type ArticleScalarFieldEnum = (typeof ArticleScalarFieldEnum)[keyof typeof ArticleScalarFieldEnum]
+
+
+export const ArticleTranslationScalarFieldEnum = {
+  id: 'id',
+  articleId: 'articleId',
+  locale: 'locale',
+  sourceLocale: 'sourceLocale',
+  title: 'title',
+  content: 'content',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type ArticleTranslationScalarFieldEnum = (typeof ArticleTranslationScalarFieldEnum)[keyof typeof ArticleTranslationScalarFieldEnum]
 
 
 export const TagScalarFieldEnum = {
@@ -975,6 +1066,7 @@ export type PrismaClientOptions = ({
 export type GlobalOmitConfig = {
   siteSettings?: Prisma.SiteSettingsOmit
   article?: Prisma.ArticleOmit
+  articleTranslation?: Prisma.ArticleTranslationOmit
   tag?: Prisma.TagOmit
   comment?: Prisma.CommentOmit
 }

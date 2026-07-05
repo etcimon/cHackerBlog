@@ -1,0 +1,28 @@
+{
+  "locale": "Deutsch",
+  "common": {
+    "home": "Startseite",
+    "search": "Suche",
+    "tags": "Schlagwörter",
+    "readMore": "Weiterlesen",
+    "fullText": "Volltext",
+    "loading": "Wird geladen…",
+    "edit": "Bearbeiten",
+    "pinned": "Angeheftet",
+    "unpublished": "Unveröffentlicht",
+    "back": "Zurück"
+  },
+  "translation": {
+    "show": "Übersetzung anzeigen",
+    "showOriginal": "Original anzeigen",
+    "translated": "(übersetzt)",
+    "translating": "Wird übersetzt…",
+    "failed": "Übersetzung fehlgeschlagen"
+  },
+  "comments": {
+    "title": "Kommentare",
+    "post": "Kommentar posten",
+    "placeholder": "Kommentar schreiben…",
+    "empty": "Noch keine Kommentare. Sei der Erste."
+  }
+}

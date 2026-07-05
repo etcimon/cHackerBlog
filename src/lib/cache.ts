@@ -14,13 +14,14 @@
 import { kvGet, kvSet, kvDel, kvDelByPrefix } from "@/lib/kv";
 import { env } from "@/lib/env";
 
-export type CacheCategory = "settings" | "article" | "feed" | "ipgeo";
+export type CacheCategory = "settings" | "article" | "feed" | "ipgeo" | "translation";
 
 const TTL: Record<CacheCategory, number> = {
   settings: env.CACHE_TTL_GLOBAL_SETTINGS,
   article: env.CACHE_TTL_ARTICLE,
   feed: env.CACHE_TTL_FEED,
   ipgeo: 60 * 60 * 24, // geo data is stable; cache a day
+  translation: env.CACHE_TTL_TRANSLATION,
 };
 
 function keyOf(category: CacheCategory, id: string): string {

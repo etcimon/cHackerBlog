@@ -1,0 +1,28 @@
+{
+  "locale": "हिन्दी",
+  "common": {
+    "home": "होम",
+    "search": "खोजें",
+    "tags": "टैग",
+    "readMore": "और पढ़ें",
+    "fullText": "पूरा लेख",
+    "loading": "लोड हो रहा है…",
+    "edit": "संपादित करें",
+    "pinned": "पिन किया गया",
+    "unpublished": "अप्रकाशित",
+    "back": "वापस"
+  },
+  "translation": {
+    "show": "अनुवाद दिखाएँ",
+    "showOriginal": "मूल दिखाएँ",
+    "translated": "(अनुवादित)",
+    "translating": "अनुवाद हो रहा है…",
+    "failed": "अनुवाद विफल"
+  },
+  "comments": {
+    "title": "टिप्पणियाँ",
+    "post": "टिप्पणी करें",
+    "placeholder": "एक टिप्पणी लिखें…",
+    "empty": "अभी तक कोई टिप्पणी नहीं। पहले बनें।"
+  }
+}

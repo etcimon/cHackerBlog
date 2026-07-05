@@ -3,11 +3,13 @@
  * "cHackerBlog", shown here and linked to the source repository.
  */
 import { Github } from "lucide-react";
+import { LanguageSwitcher } from "@/components/language-switcher";
 
 export function Footer({ xHandle, linkedinUrl }: { xHandle?: string | null; linkedinUrl?: string | null }) {
   return (
     <footer className="mt-16 border-t border-border py-8 text-center text-sm text-muted">
       <div className="mb-3 flex items-center justify-center gap-4">
+        <LanguageSwitcher />
         {xHandle && (
           <a
             href={`https://x.com/${xHandle.replace(/^@/, "")}`}

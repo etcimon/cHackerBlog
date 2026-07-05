@@ -1,0 +1,28 @@
+{
+  "locale": "中文",
+  "common": {
+    "home": "首页",
+    "search": "搜索",
+    "tags": "标签",
+    "readMore": "阅读更多",
+    "fullText": "全文",
+    "loading": "加载中…",
+    "edit": "编辑",
+    "pinned": "已置顶",
+    "unpublished": "未发布",
+    "back": "返回"
+  },
+  "translation": {
+    "show": "显示翻译",
+    "showOriginal": "显示原文",
+    "translated": "（已翻译）",
+    "translating": "翻译中…",
+    "failed": "翻译失败"
+  },
+  "comments": {
+    "title": "评论",
+    "post": "发表评论",
+    "placeholder": "写下评论…",
+    "empty": "还没有评论。来做第一个吧。"
+  }
+}

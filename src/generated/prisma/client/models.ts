@@ -10,6 +10,7 @@
  */
 export type * from './models/SiteSettings'
 export type * from './models/Article'
+export type * from './models/ArticleTranslation'
 export type * from './models/Tag'
 export type * from './models/Comment'
 export type * from './commonInputTypes'
