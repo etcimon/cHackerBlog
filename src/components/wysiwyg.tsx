@@ -22,6 +22,8 @@ import {
   EyeOff,
   SeparatorHorizontal,
   Globe,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { api, ApiClientError } from "@/lib/api-client";
 import { useToast } from "@/components/toast";
@@ -344,6 +346,9 @@ export function Wysiwyg({ value, onChange }: Props) {
   const [md, setMd] = useState("");
   const [hljsReady, setHljsReady] = useState(false);
   const [hljsInitialized, setHljsInitialized] = useState(false);
+  // Live-preview pane collapse state (markdown mode). When collapsed the preview
+  // is not rendered and its HTML is never computed (see previewHtml below).
+  const [previewCollapsed, setPreviewCollapsed] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
   // Remembers which code blocks the editor expanded, keyed by block index, so
   // the state survives the markdown preview being re-injected via
@@ -360,6 +365,16 @@ export function Wysiwyg({ value, onChange }: Props) {
       },
     }),
     [],
+  );
+
+  // Preview HTML for markdown mode. Collapsed preview skips the marked() render
+  // entirely so typing stays cheap when the pane is hidden. `hljsReady` re-runs
+  // it once highlight.js loads. Note: this only feeds the *visible* preview; the
+  // saved value is emitted independently by the onChange effect below, so
+  // collapsing the preview never affects the data written on save.
+  const previewHtml = useMemo(
+    () => (previewCollapsed ? "" : (marked(md) as string)),
+    [md, previewCollapsed, hljsReady],
   );
 
   // Initialize rich content and keep it in sync with value prop. Re-wire the
@@ -427,11 +442,11 @@ export function Wysiwyg({ value, onChange }: Props) {
   // delegated listener lives on the stable preview container, and the persisted
   // options keep blocks expanded across the per-keystroke re-injection.
   useEffect(() => {
-    if (mode === "md" && previewRef.current) {
+    if (mode === "md" && !previewCollapsed && previewRef.current) {
       wireCodeBlockToggles(previewRef.current, codeToggleOptions);
       hydrateLinkEmbeds(previewRef.current);
     }
-  }, [mode, md, hljsReady, codeToggleOptions]);
+  }, [mode, md, hljsReady, codeToggleOptions, previewCollapsed]);
 
   // When toggling to md, convert current HTML → md.
   const toggleToMd = useCallback(() => {
@@ -702,19 +717,42 @@ export function Wysiwyg({ value, onChange }: Props) {
           suppressContentEditableWarning
         />
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2">
+        <div className="flex">
           <textarea
             ref={mdRef}
             value={md}
             onChange={(e) => setMd(e.target.value)}
-            className="article-body min-h-[260px] border-r border-border bg-bg px-4 py-3 text-fg outline-none resize-none"
+            className={`article-body min-h-[260px] bg-bg px-4 py-3 text-fg outline-none resize-none ${
+              previewCollapsed ? "flex-1" : "w-1/2"
+            }`}
             placeholder="Write in Markdown..."
           />
-          <div
-            ref={previewRef}
-            className="article-body min-h-[260px] px-4 py-3 text-fg overflow-auto"
-            dangerouslySetInnerHTML={{ __html: marked(md) as string }}
-          />
+          {/* Thin, clickable divider that collapses/expands the live preview.
+              While collapsed, the preview below is not rendered at all, so its
+              marked() HTML is never computed. */}
+          <button
+            type="button"
+            data-testid="md-preview-toggle"
+            onClick={() => setPreviewCollapsed((v) => !v)}
+            title={previewCollapsed ? "Show preview" : "Hide preview"}
+            aria-label={previewCollapsed ? "Show preview" : "Hide preview"}
+            aria-expanded={!previewCollapsed}
+            className="flex w-4 flex-none cursor-pointer items-center justify-center border-l border-border bg-card/60 text-muted transition-colors hover:bg-border/40 hover:text-fg"
+          >
+            {previewCollapsed ? (
+              <ChevronLeft className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )}
+          </button>
+          {!previewCollapsed && (
+            <div
+              ref={previewRef}
+              data-testid="md-preview"
+              className="article-body min-h-[260px] w-1/2 overflow-auto px-4 py-3 text-fg"
+              dangerouslySetInnerHTML={{ __html: previewHtml }}
+            />
+          )}
         </div>
       )}
     </div>

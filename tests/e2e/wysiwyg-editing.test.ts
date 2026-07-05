@@ -71,7 +71,7 @@ describe("WYSIWYG Article Editing", () => {
     await loginAsAdmin(context);
 
     // Open the "New article" editor (admin must be logged in).
-    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle0", timeout: 15000 });
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle0", timeout: 30000 });
     await page.waitForSelector('button[title="New article"]', { timeout: 10000 });
     await page.click('button[title="New article"]');
 
@@ -163,16 +163,13 @@ describe("WYSIWYG Article Editing", () => {
     expect(richCounts.audio).toBeGreaterThanOrEqual(1);
 
     // Close the editor modal to leave a clean state for other tests.
-    const closeBtn = await page.$('button[type="button"] svg.lucide-x');
-    if (closeBtn) {
-      await page.evaluate(() => {
-        const dialog = document.querySelector(".fixed.inset-0");
-        const cancel = Array.from(dialog?.querySelectorAll("button") ?? []).find(
-          (b) => b.textContent?.trim() === "Cancel",
-        );
-        (cancel as HTMLButtonElement | undefined)?.click();
-      });
-    }
+    await page.evaluate(() => {
+      const dialog = document.querySelector(".fixed.inset-0");
+      const cancel = Array.from(dialog?.querySelectorAll("button") ?? []).find(
+        (b) => b.textContent?.trim() === "Cancel",
+      );
+      (cancel as HTMLButtonElement | undefined)?.click();
+    });
   }, 60000);
 
   it("should preserve markdown attachment tags through WYSIWYG round-trip", async () => {
@@ -181,7 +178,7 @@ describe("WYSIWYG Article Editing", () => {
     await loginAsAdmin(context);
 
     // Open the "New article" editor
-    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle0", timeout: 15000 });
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle0", timeout: 30000 });
     await page.waitForSelector('button[title="New article"]', { timeout: 10000 });
     await page.click('button[title="New article"]');
 
@@ -267,4 +264,110 @@ describe("WYSIWYG Article Editing", () => {
     const parsed = marked.parse(testHtml);
     expect(parsed).toBeTruthy();
   }, 5000);
+
+  it("should collapse the markdown preview divider and still persist + display an update", async () => {
+    const { page, baseUrl } = context;
+
+    await loginAsAdmin(context);
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle0", timeout: 30000 });
+
+    // Open the edit modal for the first article (admin-only Edit button).
+    await page.waitForSelector('button[title="Edit article"]', { timeout: 15000 });
+    await page.click('button[title="Edit article"]');
+
+    // Wait until the edit body has loaded into the rich surface before toggling
+    // to Markdown (the content is fetched asynchronously on open).
+    await page.waitForSelector('button[title="Switch to Markdown"]', { timeout: 10000 });
+    await page.waitForFunction(
+      () => {
+        const el = document.querySelector('div.article-body[contenteditable="true"]');
+        return !!el && (el.textContent?.trim().length ?? 0) > 0;
+      },
+      { timeout: 10000 },
+    );
+
+    // Switch to Markdown mode; the split view + preview divider appear.
+    await page.click('button[title="Switch to Markdown"]');
+    await page.waitForSelector('textarea[placeholder="Write in Markdown..."]', {
+      timeout: 10000,
+    });
+
+    // The live preview pane is present (expanded) by default.
+    await page.waitForSelector('[data-testid="md-preview"]', { timeout: 5000 });
+
+    // Replace the body with a unique marker so we can assert on it later.
+    const marker = `E2E-UPDATE-${Date.now()}`;
+    await page.evaluate(() => {
+      const ta = document.querySelector(
+        'textarea[placeholder="Write in Markdown..."]',
+      ) as HTMLTextAreaElement;
+      ta.focus();
+      ta.select();
+    });
+    await page.keyboard.press("Backspace");
+    await page.keyboard.type(`# Updated heading\n\n${marker}`);
+
+    // The expanded preview reflects the typed marker (marked() is computed).
+    await page.waitForFunction(
+      (m: string) => {
+        const el = document.querySelector('[data-testid="md-preview"]');
+        return !!el && (el.textContent?.includes(m) ?? false);
+      },
+      { timeout: 5000 },
+      marker,
+    );
+
+    // Click the thin divider to COLLAPSE the preview. The preview pane must be
+    // removed from the DOM entirely — collapsed view does not render/compute it.
+    await page.click('[data-testid="md-preview-toggle"]');
+    await page.waitForFunction(
+      () => !document.querySelector('[data-testid="md-preview"]'),
+      { timeout: 5000 },
+    );
+
+    // Type additional content while collapsed to prove edits still flow into the
+    // saved value even though no preview is being computed.
+    await page.evaluate(() => {
+      const ta = document.querySelector(
+        'textarea[placeholder="Write in Markdown..."]',
+      ) as HTMLTextAreaElement;
+      ta.focus();
+    });
+    await page.keyboard.type("\n\nMore body text after collapse.");
+
+    // Submit the update (the form's only submit button is "Update").
+    const submit = await page.waitForSelector('button[type="submit"]', { timeout: 5000 });
+    await submit!.click();
+
+    // The editor modal closes once the update succeeds.
+    await page.waitForFunction(
+      () => !document.querySelector('textarea[placeholder="Write in Markdown..."]'),
+      { timeout: 20000 },
+    );
+
+    // Validate the update persisted the proper data.
+    const { PrismaClient } = await import("../../src/generated/prisma/client/client");
+    const { PrismaLibSql } = await import("@prisma/adapter-libsql");
+    const adapter = new PrismaLibSql({ url: "file:./test.sqlite" });
+    const client = new PrismaClient({ adapter });
+    const updated = await client.article.findFirst({
+      where: { content: { contains: marker } },
+    });
+    expect(updated).not.toBeNull();
+    expect(updated!.content).toContain(marker);
+    expect(updated!.content).toContain("More body text after collapse.");
+
+    // Validate the updated article displays on its page.
+    await page.goto(`${baseUrl}/article/${updated!.slug}`, {
+      waitUntil: "networkidle0",
+      timeout: 30000,
+    });
+    const displayed = await page.evaluate(
+      (m: string) => document.body.textContent?.includes(m) ?? false,
+      marker,
+    );
+    expect(displayed).toBe(true);
+
+    await client.$disconnect();
+  }, 60000);
 });

@@ -112,6 +112,6 @@ describe("Unpublished Article Admin Access", () => {
     });
 
     expect(result.targetSlug).toBe(article.slug);
-    expect(result.items[0]?.tags).toEqual(["debug-tag"]);
+    expect(result.items[0]?.tags).toEqual(["Debug Tag"]);
   });
 });

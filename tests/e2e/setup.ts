@@ -2,6 +2,7 @@ import puppeteer, { Browser, Page } from "puppeteer";
 import { PrismaClient } from "../../src/generated/prisma/client/client";
 import { PrismaLibSql } from "@prisma/adapter-libsql";
 import { config } from "dotenv";
+import { startTestServer, stopTestServer, isServerRunning, SERVER_URL } from "../../scripts/test-server";
 
 // Load test environment variables
 config({ path: ".env.test" });
@@ -36,12 +37,23 @@ export async function setup(): Promise<TestContext> {
   // Seed test data after truncation
   await seedTestData();
 
+  // Start the test server only if not already started by global runner
+  // Check if lock file exists (indicates global runner is managing the server)
+  const mode = process.env.NODE_ENV === "production" ? "prod" : "dev";
+  let baseUrl: string;
+  
+  if (isServerRunning()) {
+    console.log("Using existing test server (managed by global runner)");
+    baseUrl = SERVER_URL;
+  } else {
+    baseUrl = await startTestServer({ mode });
+  }
+
   const browser = await puppeteer.launch({
     headless: true,
     args: ["--no-sandbox", "--disable-setuid-sandbox"],
   });
   const page = await browser.newPage();
-  const baseUrl = process.env.TEST_BASE_URL || "http://localhost:3000";
 
   console.log("E2E test environment ready");
   return { browser, page, baseUrl };
@@ -50,6 +62,11 @@ export async function setup(): Promise<TestContext> {
 export async function teardown(context: TestContext): Promise<void> {
   console.log("Tearing down e2e test environment...");
   await context.browser.close();
+  
+  // Only stop server if we started it (not managed by global runner)
+  if (!isServerRunning()) {
+    await stopTestServer();
+  }
 }
 
 export async function loginAsAdmin(context: TestContext): Promise<void> {
