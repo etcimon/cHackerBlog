@@ -120,10 +120,10 @@ async function computeFirstLoad(
     },
   });
 
-  const items = rows.map((a) =>
-    // Expand the target (instant full text) plus the leading article.
+  const items = rows.map((a, index) =>
+    // Expand all articles up to and including the target.
     mapFeedRow(a, {
-      includeContent: a.slug === slug || env.FEED_EXPAND_ALL,
+      includeContent: index <= targetIndex || env.FEED_EXPAND_ALL,
     }),
   );
 
