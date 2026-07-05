@@ -9,11 +9,16 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import bcrypt from "bcryptjs";
-import { env, isProd } from "@/lib/env";
+import { env } from "@/lib/env";
 import { Errors } from "@/lib/errors";
 
 const COOKIE_NAME = "chb_admin";
 const MAX_AGE_SECONDS = 60 * 60 * 12; // 12h
+
+// Mark the cookie Secure only when the site is actually served over HTTPS
+// (reflected by APP_URL). Basing this on NODE_ENV breaks E2E tests that run a
+// production build over http://localhost, where a Secure cookie is never stored.
+const COOKIE_SECURE = env.APP_URL.startsWith("https://");
 
 function sign(payload: string): string {
   const mac = createHmac("sha256", env.SESSION_SECRET).update(payload).digest("hex");
@@ -60,7 +65,7 @@ export async function createSession(): Promise<void> {
   const cookieStore = await cookies();
   cookieStore.set(COOKIE_NAME, token, {
     httpOnly: true,
-    secure: isProd,
+    secure: COOKIE_SECURE,
     sameSite: "lax",
     path: "/",
     maxAge: MAX_AGE_SECONDS,
