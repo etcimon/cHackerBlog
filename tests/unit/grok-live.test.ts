@@ -66,6 +66,11 @@ maybeDescribe("Live Grok translation — AI Slop article (real API)", () => {
       targetLocale: "es",
     });
 
+    // Translated HTML must use .cb-code wrappers (not bare <pre><code>) so
+    // collapse/expand toggles and preview line limiting work in the article card.
+    expect(result.content).toContain("cb-code");
+    expect(result.content).toContain("cb-code__toggle");
+
     // Title should be translated (non-empty, different from source).
     expect(result.title).toBeTruthy();
     expect(result.title).not.toBe("When AI Slop Meets the Unit Test");

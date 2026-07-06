@@ -21,6 +21,11 @@ import {
   registerEmbedExtension,
   addEmbedTurndownRule,
 } from "@/lib/embeds";
+import {
+  parseCodeBlockInfo,
+  buildCodeBlock,
+  escapeCode,
+} from "@/lib/code-block-render";
 import { localeLabel, type Locale } from "@/lib/i18n";
 import { createLogger } from "@/lib/logger";
 
@@ -59,12 +64,15 @@ async function checkGlobalRateLimit(): Promise<void> {
 // on the shared marked instance (idempotent).
 registerEmbedExtension(marked);
 
-// Configure marked to preserve language classes in code blocks
+// Configure marked to produce the same `.cb-code` wrapper as the WYSIWYG editor
+// so translated articles get collapse/expand toggles, preview line limiting, and
+// size constraints — not bare <pre><code> that would overflow the article card.
 marked.use({
   renderer: {
     code(code: string, language: string | undefined) {
-      const lang = language ? ` class="language-${language}"` : "";
-      return `<pre><code${lang}>${code}</code></pre>`;
+      const { language: lang, previewLines, collapseKind, size } = parseCodeBlockInfo(language || "");
+      const totalLines = code.split("\n").length;
+      return buildCodeBlock(escapeCode(code), lang, totalLines, { previewLines, collapseKind, size }, false);
     },
   },
 });
