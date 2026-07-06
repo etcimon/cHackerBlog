@@ -85,6 +85,126 @@ export function markdownToHtml(markdown: string): string {
 }
 
 /**
+ * Extract fenced code blocks from Markdown, replacing each with a short
+ * placeholder comment (`<!--CB0-->`, `<!--CB1-->`, …). This prevents the code
+ * contents from being sent to the translation model (saving tokens and avoiding
+ * accidental alteration), while keeping the structural position so the block
+ * can be restored verbatim after translation.
+ *
+ * Returns the stripped Markdown and an ordered array of the original code
+ * blocks (including their ``` fences and language tags).
+ */
+export function extractCodeBlocks(
+  markdown: string,
+): { markdown: string; codeBlocks: string[] } {
+  const codeBlocks: string[] = [];
+  const lines = markdown.split("\n");
+  const out: string[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i]!;
+    if (/^```/.test(line.trim())) {
+      // Start of a fenced code block — collect until the closing fence
+      const block: string[] = [line];
+      i++;
+      while (i < lines.length && !/^```/.test(lines[i]!.trim())) {
+        block.push(lines[i]!);
+        i++;
+      }
+      // Include the closing fence if present
+      if (i < lines.length) {
+        block.push(lines[i]!);
+        i++;
+      }
+      const placeholder = `<!--CB${codeBlocks.length}-->`;
+      codeBlocks.push(block.join("\n"));
+      out.push(placeholder);
+    } else {
+      out.push(line);
+      i++;
+    }
+  }
+
+  return { markdown: out.join("\n"), codeBlocks };
+}
+
+/**
+ * Restore code block placeholders (`<!--CB0-->`, …) back to the original
+ * fenced code blocks. Inverse of `extractCodeBlocks`.
+ */
+export function restoreCodeBlocks(
+  markdown: string,
+  codeBlocks: string[],
+): string {
+  return markdown.replace(/<!--CB(\d+)-->/g, (_, idx: string) => {
+    const i = parseInt(idx, 10);
+    return codeBlocks[i] ?? `<!--CB${idx}-->`;
+  });
+}
+
+/**
+ * Split Markdown into chunks for translation, each no larger than `maxChars`.
+ * Splitting happens on line boundaries only — never through a line, and never
+ * through a fenced code block. If a single code block exceeds `maxChars`, it
+ * gets its own chunk (oversized but intact).
+ *
+ * Returns an array of Markdown strings, each ending with a newline.
+ */
+export function chunkMarkdown(markdown: string, maxChars: number): string[] {
+  if (markdown.length === 0) return [];
+
+  const lines = markdown.split("\n");
+  // If the input ends with \n, split produces a trailing "" — remove it
+  // since flush already adds \n to each chunk.
+  if (lines[lines.length - 1] === "") lines.pop();
+
+  const chunks: string[] = [];
+  let current: string[] = [];
+  let currentLen = 0;
+  let inCodeBlock = false;
+
+  const flush = () => {
+    if (current.length > 0) {
+      chunks.push(current.join("\n") + "\n");
+      current = [];
+      currentLen = 0;
+    }
+  };
+
+  for (const line of lines) {
+    const lineLen = line.length + 1; // +1 for the \n
+    const startsOrEndsCode = /^```/.test(line.trim());
+
+    // Track code-block state
+    if (startsOrEndsCode) inCodeBlock = !inCodeBlock;
+
+    // If we're inside a code block, keep accumulating regardless of size.
+    // The only exception is when the code block just closed on this line —
+    // we can flush after adding it.
+    if (inCodeBlock || (startsOrEndsCode && !inCodeBlock)) {
+      current.push(line);
+      currentLen += lineLen;
+      // If the code block just closed and we're over the limit, flush
+      if (!inCodeBlock && currentLen >= maxChars) flush();
+      continue;
+    }
+
+    // Outside code blocks: flush before starting a new chunk if this line
+    // would push us over the limit.
+    if (currentLen > 0 && currentLen + lineLen > maxChars) {
+      flush();
+    }
+
+    current.push(line);
+    currentLen += lineLen;
+  }
+
+  flush();
+  return chunks;
+}
+
+/**
  * Substitute the supported placeholders in a prompt template. Unknown
  * placeholders are left untouched so custom templates fail visibly rather than
  * silently dropping text.
@@ -212,19 +332,40 @@ export async function translateArticleBody(
   const complete = input.complete ?? callGrok;
   const markdown = htmlToTranslatableMarkdown(input.contentHtml);
 
-  const [translatedMarkdown, translatedTitle] = await Promise.all([
-    complete(buildTranslationPrompt(markdown, input.sourceLocale, input.targetLocale)),
-    complete(buildTitlePrompt(input.title, input.sourceLocale, input.targetLocale)),
-  ]);
+  // Strip code blocks before translation: replace each with a short placeholder
+  // so the model never sees code contents (saves tokens, prevents alteration).
+  const { markdown: stripped, codeBlocks } = extractCodeBlocks(markdown);
+  const chunks = chunkMarkdown(stripped, env.GROK_CHUNK_SIZE);
 
-  // Ensure the translated markdown ends with a newline to preserve line endings
-  const normalizedMarkdown = translatedMarkdown.endsWith("\n")
-    ? translatedMarkdown
-    : translatedMarkdown + "\n";
+  log.info(
+    "translateArticleBody: %d chunks (max %d chars each), %d code blocks extracted",
+    chunks.length,
+    env.GROK_CHUNK_SIZE,
+    codeBlocks.length,
+  );
+
+  // Translate the title in parallel with the body chunks.
+  const titlePromise = complete(
+    buildTitlePrompt(input.title, input.sourceLocale, input.targetLocale),
+  );
+
+  // Translate body chunks sequentially to preserve context continuity.
+  const translatedChunks: string[] = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i]!;
+    log.info("translating chunk %d/%d (%d chars)", i + 1, chunks.length, chunk.length);
+    const prompt = buildTranslationPrompt(chunk, input.sourceLocale, input.targetLocale);
+    const result = await complete(prompt);
+    // Ensure each translated chunk ends with a newline for clean reassembly.
+    translatedChunks.push(result.endsWith("\n") ? result : result + "\n");
+  }
+
+  const translatedMarkdown = restoreCodeBlocks(translatedChunks.join(""), codeBlocks);
+  const translatedTitle = await titlePromise;
 
   return {
     title: translatedTitle.trim() || input.title,
-    content: markdownToHtml(normalizedMarkdown),
+    content: markdownToHtml(translatedMarkdown),
   };
 }
 
