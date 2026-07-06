@@ -119,16 +119,21 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
   }, [bodyHtml, codeToggleOptions]);
 
   // Apply syntax highlighting asynchronously (lazy-loads hljs + languages), then
-  // re-wire/restore in case highlighting replaced any markup.
+  // re-wire/restore in case highlighting replaced any markup. The stale flag
+  // ensures that if bodyHtml changes before the promise resolves (e.g. user
+  // toggles translation while hljs is still loading), the stale callback is
+  // skipped and only the latest bodyHtml gets highlighted.
   useEffect(() => {
+    let stale = false;
     if (bodyHtml !== undefined && articleBodyRef.current) {
       ensureHighlightJsReady(bodyHtml).then(() => {
-        if (articleBodyRef.current) {
+        if (!stale && articleBodyRef.current) {
           highlightCodeInElement(articleBodyRef.current);
           wireCodeBlockToggles(articleBodyRef.current, codeToggleOptions);
         }
       });
     }
+    return () => { stale = true; };
   }, [bodyHtml, codeToggleOptions]);
 
   const handlePin = async () => {

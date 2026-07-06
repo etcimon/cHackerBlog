@@ -168,9 +168,12 @@ export function highlightCodeInElement(element: HTMLElement): void {
       const text = block.textContent || "";
       if (lang !== "plaintext" && hljsModule.getLanguage(lang)) {
         block.innerHTML = hljsModule.highlight(text, { language: lang }).value;
+        block.classList.add("hljs");
+      } else if (lang === "plaintext") {
+        block.classList.add("hljs");
       }
-      // The loaded theme stylesheet targets `.hljs`; add it for token colours.
-      block.classList.add("hljs");
+      // If the language isn't available yet, don't add "hljs" — allows a
+      // subsequent call (after the language is loaded) to retry highlighting.
     } catch (error) {
       console.error("Failed to highlight code block:", error);
     }
