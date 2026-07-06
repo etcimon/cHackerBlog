@@ -450,24 +450,28 @@ export async function getLegalArticle(
   if (!article.published && !opts.includeUnpublished) return null;
 
   // If a locale is requested and it differs from the article's own locale,
-  // attempt to serve an existing ArticleTranslation for that locale. Only
-  // serve the translation when it is published and has non-empty content;
-  // otherwise fall back to the base (default-locale) article so the reader
-  // never sees a blank or unpublished page.
+  // attempt to serve an existing ArticleTranslation for that locale. For
+  // public access, only serve the translation when it is published and has
+  // non-empty content; otherwise fall back to the base (default-locale)
+  // article so the reader never sees a blank or unpublished page. For admin
+  // access, return the translation regardless so it can be edited.
   if (opts.locale && opts.locale !== article.locale) {
     const translation = await prisma.articleTranslation.findUnique({
       where: { articleId_locale: { articleId: article.id, locale: opts.locale } },
       select: { title: true, content: true, published: true },
     });
-    if (translation && translation.published && translation.content.replace(/<[^>]*>/g, "").trim().length > 0) {
-      return {
-        id: article.id,
-        slug: article.slug,
-        title: translation.title,
-        content: translation.content,
-        published: article.published,
-        translated: true,
-      };
+    if (translation) {
+      const hasContent = translation.content.replace(/<[^>]*>/g, "").trim().length > 0;
+      if (opts.includeUnpublished || (translation.published && hasContent)) {
+        return {
+          id: article.id,
+          slug: article.slug,
+          title: translation.title,
+          content: translation.content,
+          published: translation.published,
+          translated: true,
+        };
+      }
     }
   }
 
