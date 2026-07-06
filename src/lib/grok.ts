@@ -26,6 +26,11 @@ import {
   buildCodeBlock,
   escapeCode,
 } from "@/lib/code-block-render";
+import {
+  initHighlightJs,
+  loadHighlightJsLanguage,
+  getHljsModule,
+} from "@/lib/highlight";
 import { localeLabel, type Locale } from "@/lib/i18n";
 import { createLogger } from "@/lib/logger";
 
@@ -67,12 +72,28 @@ registerEmbedExtension(marked);
 // Configure marked to produce the same `.cb-code` wrapper as the WYSIWYG editor
 // so translated articles get collapse/expand toggles, preview line limiting, and
 // size constraints — not bare <pre><code> that would overflow the article card.
+// When highlight.js is initialized (via ensureHljsForMarkdown before rendering),
+// code blocks receive proper hljs token spans and the `hljs` class, matching the
+// WYSIWYG editor's output so the client-side highlightCodeInElement pass skips
+// them (its idempotency guard checks classList.contains("hljs")).
 marked.use({
   renderer: {
     code(code: string, language: string | undefined) {
       const { language: lang, previewLines, collapseKind, size } = parseCodeBlockInfo(language || "");
       const totalLines = code.split("\n").length;
-      return buildCodeBlock(escapeCode(code), lang, totalLines, { previewLines, collapseKind, size }, false);
+      const hljs = getHljsModule();
+
+      if (!hljs) {
+        return buildCodeBlock(escapeCode(code), lang, totalLines, { previewLines, collapseKind, size }, false);
+      }
+
+      const validLang = lang && hljs.getLanguage(lang) ? lang : "plaintext";
+      try {
+        const highlighted = hljs.highlight(code, { language: validLang }).value;
+        return buildCodeBlock(highlighted, validLang, totalLines, { previewLines, collapseKind, size }, true);
+      } catch {
+        return buildCodeBlock(escapeCode(code), validLang, totalLines, { previewLines, collapseKind, size }, false);
+      }
     },
   },
 });
@@ -90,6 +111,30 @@ export function htmlToTranslatableMarkdown(html: string): string {
 /** Expand (translated) Markdown back into article-body HTML. */
 export function markdownToHtml(markdown: string): string {
   return marked.parse(markdown) as string;
+}
+
+/** Extract language identifiers from fenced code blocks in Markdown. */
+function extractLanguagesFromMarkdown(markdown: string): string[] {
+  const regex = /^```([^\s]+)/gm;
+  const languages = new Set<string>();
+  let match;
+  while ((match = regex.exec(markdown)) !== null) {
+    languages.add(match[1]);
+  }
+  return Array.from(languages);
+}
+
+/**
+ * Initialize highlight.js and register all languages referenced by fenced code
+ * blocks in the Markdown. Must be called before `markdownToHtml` so the marked
+ * renderer can produce highlighted HTML with proper `hljs` class names and token
+ * spans, matching the WYSIWYG editor's output.
+ */
+async function ensureHljsForMarkdown(markdown: string): Promise<void> {
+  if (!/```[\s\S]*?```/.test(markdown)) return;
+  await initHighlightJs();
+  const languages = extractLanguagesFromMarkdown(markdown);
+  await Promise.all(languages.map((lang) => loadHighlightJsLanguage(lang)));
 }
 
 /**
@@ -396,6 +441,11 @@ export async function translateArticleBody(
   const translatedChunks = await Promise.all(chunkPromises);
   const translatedMarkdown = restoreCodeBlocks(translatedChunks.join(""), codeBlocks);
   const translatedTitle = await titlePromise;
+
+  // Ensure highlight.js is initialized and all code-block languages are
+  // registered before rendering, so the marked renderer produces highlighted
+  // HTML with `hljs` class names and token spans baked into the stored content.
+  await ensureHljsForMarkdown(translatedMarkdown);
 
   return {
     title: translatedTitle.trim() || input.title,

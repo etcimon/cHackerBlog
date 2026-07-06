@@ -149,6 +149,9 @@ describe("translateArticleBody (end-to-end with recorded completion)", () => {
     expect(result.content).toContain("language-ts");
     expect(result.content).toContain("data-embed");
     expect(result.content).toContain("data-preview-end");
+    // Code blocks are highlighted server-side with hljs token spans and class.
+    expect(result.content).toContain("hljs");
+    expect(result.content).toContain("hljs-keyword");
   });
 
   it("keeps the original title when the model returns an empty string", async () => {
