@@ -30,7 +30,8 @@
     "test:unit:verbose": "bun test tests/unit",
     "screenshots": "bun run scripts/screenshots.ts",
     "test:db:setup": "bun run scripts/setup-test-db.ts",
-    "test:grok": "bun run scripts/test-grok-translation.ts"
+    "test:grok": "bun run scripts/test-grok-translation.ts",
+    "test:grok-live": "bun test tests/unit/grok-live.test.ts"
   },
   "prisma": {
     "seed": "bun run prisma/seed.ts"

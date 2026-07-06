@@ -372,22 +372,20 @@ export async function translateArticleBody(
     codeBlocks.length,
   );
 
-  // Translate the title in parallel with the body chunks.
+  // Translate the title and all body chunks in parallel.
   const titlePromise = complete(
     buildTitlePrompt(input.title, input.sourceLocale, input.targetLocale),
   );
 
-  // Translate body chunks sequentially to preserve context continuity.
-  const translatedChunks: string[] = [];
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i]!;
+  const chunkPromises = chunks.map((chunk, i) => {
     log.info("translating chunk %d/%d (%d chars)", i + 1, chunks.length, chunk.length);
     const prompt = buildTranslationPrompt(chunk, input.sourceLocale, input.targetLocale);
-    const result = await complete(prompt);
-    // Ensure each translated chunk ends with a newline for clean reassembly.
-    translatedChunks.push(result.endsWith("\n") ? result : result + "\n");
-  }
+    return complete(prompt).then((result) =>
+      result.endsWith("\n") ? result : result + "\n",
+    );
+  });
 
+  const translatedChunks = await Promise.all(chunkPromises);
   const translatedMarkdown = restoreCodeBlocks(translatedChunks.join(""), codeBlocks);
   const translatedTitle = await titlePromise;
 

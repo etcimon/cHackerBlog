@@ -162,7 +162,7 @@ const schema = z.object({
   GROK_TEMPERATURE: z.coerce.number().min(0).max(2).default(0.2),
   // Max characters per chunk when splitting article markdown for translation.
   // Chunks are split on line boundaries and never through code blocks/embeds.
-  GROK_CHUNK_SIZE: z.coerce.number().int().positive().default(500),
+  GROK_CHUNK_SIZE: z.coerce.number().int().positive().default(1000),
   // Global rate limit for Grok API calls (per day). Resets at midnight UTC.
   GROK_RATE_LIMIT_DAY: z.coerce.number().int().positive().default(100),
   // Tunable prompt templates (placeholders documented above the defaults).

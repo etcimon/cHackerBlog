@@ -168,8 +168,8 @@ describe("translateArticleBody (end-to-end with recorded completion)", () => {
 describe("translateArticleBody with multiple chunks", () => {
   it("translates each chunk and reassembles correctly", async () => {
     // Build a large HTML body that will produce markdown exceeding the default
-    // GROK_CHUNK_SIZE (500 chars). Each paragraph is ~80 chars in markdown, so
-    // ~10 paragraphs will exceed 500.
+    // GROK_CHUNK_SIZE (1000 chars). Each paragraph is ~80 chars in markdown, so
+    // ~20 paragraphs will exceed 1000.
     const paragraphs = Array.from({ length: 20 }, (_, i) =>
       `<p>This is paragraph number ${i + 1} with enough text to fill a chunk nicely and then some more.</p>`
     ).join("\n");
@@ -186,7 +186,7 @@ describe("translateArticleBody with multiple chunks", () => {
       // Body prompt — return the content portion with a marker
       const contentStart = prompt.indexOf("{content}");
       const body = contentStart >= 0 ? prompt.slice(contentStart + 9) : prompt;
-      return `[FR chunk ${callCount}] ` + body;
+      return `[FR] ` + body;
     };
 
     const result = await translateArticleBody({
