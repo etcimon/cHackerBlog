@@ -21,6 +21,7 @@ import { useToast } from "@/components/toast";
 import { useAdmin } from "@/components/admin-context";
 import { useSiteConfig } from "@/lib/use-site-config";
 import { useI18n } from "@/lib/use-i18n";
+import { buildLocalePath, DEFAULT_LOCALE } from "@/lib/i18n";
 import { CommentBar } from "@/components/comment-bar";
 import { useCommentsEnabled } from "@/lib/use-comments-enabled";
 import {
@@ -59,6 +60,8 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
   const config = useSiteConfig();
   const { locale: userLocale, t } = useI18n();
   const commentsEnabled = useCommentsEnabled();
+  const defaultLocale = config?.defaultLocale ?? DEFAULT_LOCALE;
+  const articleHref = buildLocalePath(`/article/${item.slug}`, userLocale, defaultLocale);
   const articleBodyRef = useRef<HTMLDivElement>(null);
   // Remembers which code blocks the reader expanded, keyed by block index, so
   // the state survives content re-injection (e.g. after an admin edit refresh).
@@ -293,7 +296,7 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
         )}
         <h2 className="font-heading text-3xl font-bold leading-tight text-fg">
           <a
-            href={`/article/${item.slug}`}
+            href={articleHref}
             className="transition-colors hover:text-accent"
           >
             {displayTitle}

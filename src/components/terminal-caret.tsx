@@ -149,7 +149,7 @@ export function TerminalCaret() {
     // Resolve the default anchor: the loaded article's title on /article/<slug>,
     // otherwise the blog title (falls back to the first <h1>).
     const findDefaultAnchor = (): HTMLElement | null => {
-      const m = window.location.pathname.match(/^\/article\/(.+?)\/?$/);
+      const m = window.location.pathname.match(/^(?:\/[a-z]{2})?\/article\/(.+?)\/?$/);
       if (m) {
         const slug = decodeURIComponent(m[1]!);
         const header = document.getElementById(`${slug}-header`);

@@ -10,6 +10,8 @@ import { api, ApiClientError } from "@/lib/api-client";
 import { useToast } from "@/components/toast";
 import { ShareModal } from "@/components/share-modal";
 import { useI18n } from "@/lib/use-i18n";
+import { useSiteConfig } from "@/lib/use-site-config";
+import { buildLocalePath, DEFAULT_LOCALE } from "@/lib/i18n";
 
 interface CommentItem {
   id: string;
@@ -49,7 +51,9 @@ export function CommentBar({
   const [submitting, setSubmitting] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const toast = useToast();
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
+  const config = useSiteConfig();
+  const defaultLocale = config?.defaultLocale ?? DEFAULT_LOCALE;
 
   const toggle = useCallback(async () => {
     if (!commentsEnabled) {
@@ -97,11 +101,13 @@ export function CommentBar({
     }
   }, [articleId, name, body, ageConfirmed, toast]);
 
-  // Canonical, crawlable, SEO-friendly article URL (no hash).
+  // Canonical, crawlable, SEO-friendly article URL — locale-prefixed when the
+  // current language differs from the site default so the language is preserved.
+  const articlePath = buildLocalePath(`/article/${slug}`, locale, defaultLocale);
   const articleUrl =
     typeof window !== "undefined"
-      ? `${window.location.origin}/article/${slug}`
-      : `/article/${slug}`;
+      ? `${window.location.origin}${articlePath}`
+      : articlePath;
 
   return (
     <div className="mt-6 border-t border-border pt-4">
