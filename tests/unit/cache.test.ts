@@ -3,6 +3,7 @@ process.env.DATABASE_URL = "file:./test.sqlite";
 process.env.CACHE_DRIVER = "memory";
 
 import { kvGet, kvSet, kvDel, kvDelByPrefix } from "@/lib/kv";
+import { setCached, getCached, invalidateByPrefix } from "@/lib/cache";
 
 describe("Cache (KV) Layer", () => {
   beforeEach(async () => {
@@ -67,5 +68,35 @@ describe("Cache (KV) Layer", () => {
     await kvSet("test:fallback", "value");
     const result = await kvGet("test:fallback");
     expect(result).toBe("value");
+  });
+});
+
+describe("invalidateByPrefix (per-article translation eviction)", () => {
+  beforeEach(async () => {
+    await kvDelByPrefix("cache:translation:");
+  });
+
+  it("evicts only the targeted article's translation cache entries", async () => {
+    // Simulate two articles with translations in multiple locales
+    await setCached("translation", "articleA:es", { title: "A-es" });
+    await setCached("translation", "articleA:fr", { title: "A-fr" });
+    await setCached("translation", "articleB:es", { title: "B-es" });
+    await setCached("translation", "articleB:fr", { title: "B-fr" });
+
+    // Evict articleA only
+    await invalidateByPrefix("translation", "articleA:");
+
+    // articleA entries are gone
+    expect(await getCached("translation", "articleA:es")).toBeNull();
+    expect(await getCached("translation", "articleA:fr")).toBeNull();
+    // articleB entries are untouched
+    expect(await getCached("translation", "articleB:es")).toEqual({ title: "B-es" });
+    expect(await getCached("translation", "articleB:fr")).toEqual({ title: "B-fr" });
+  });
+
+  it("does nothing when no keys match the prefix", async () => {
+    await setCached("translation", "articleX:es", { title: "X-es" });
+    await invalidateByPrefix("translation", "articleY:");
+    expect(await getCached("translation", "articleX:es")).toEqual({ title: "X-es" });
   });
 });

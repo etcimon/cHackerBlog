@@ -16,7 +16,7 @@ import { marked } from "marked";
 import TurndownService from "turndown";
 import { env, grokConfigured } from "@/lib/env";
 import { getPrisma } from "@/lib/prisma";
-import { remember, invalidate, get, set } from "@/lib/cache";
+import { remember, invalidate, invalidateByPrefix, get, set } from "@/lib/cache";
 import {
   registerEmbedExtension,
   addEmbedTurndownRule,
@@ -91,6 +91,10 @@ export function markdownToHtml(markdown: string): string {
  * accidental alteration), while keeping the structural position so the block
  * can be restored verbatim after translation.
  *
+ * Handles fences of any length (3+ backticks). Turndown uses 4+ backtick
+ * fences when code content contains ``` lines, so we must only close on a
+ * fence with >= backticks than the opening fence.
+ *
  * Returns the stripped Markdown and an ordered array of the original code
  * blocks (including their ``` fences and language tags).
  */
@@ -104,11 +108,16 @@ export function extractCodeBlocks(
 
   while (i < lines.length) {
     const line = lines[i]!;
-    if (/^```/.test(line.trim())) {
-      // Start of a fenced code block — collect until the closing fence
+    const openMatch = line.trim().match(/^(`{3,})/);
+    if (openMatch) {
+      // Start of a fenced code block — collect until a closing fence with
+      // at least as many backticks as the opening fence.
+      const fenceLen = openMatch[1].length;
       const block: string[] = [line];
       i++;
-      while (i < lines.length && !/^```/.test(lines[i]!.trim())) {
+      while (i < lines.length) {
+        const closeMatch = lines[i]!.trim().match(/^(`{3,})$/);
+        if (closeMatch && closeMatch[1].length >= fenceLen) break;
         block.push(lines[i]!);
         i++;
       }
@@ -149,6 +158,10 @@ export function restoreCodeBlocks(
  * through a fenced code block. If a single code block exceeds `maxChars`, it
  * gets its own chunk (oversized but intact).
  *
+ * Handles fences of any length (3+ backticks). Turndown uses 4+ backtick
+ * fences when code content contains ``` lines, so we must only close on a
+ * fence with >= backticks than the opening fence.
+ *
  * Returns an array of Markdown strings, each ending with a newline.
  */
 export function chunkMarkdown(markdown: string, maxChars: number): string[] {
@@ -163,6 +176,7 @@ export function chunkMarkdown(markdown: string, maxChars: number): string[] {
   let current: string[] = [];
   let currentLen = 0;
   let inCodeBlock = false;
+  let codeFenceLen = 0;
 
   const flush = () => {
     if (current.length > 0) {
@@ -174,19 +188,33 @@ export function chunkMarkdown(markdown: string, maxChars: number): string[] {
 
   for (const line of lines) {
     const lineLen = line.length + 1; // +1 for the \n
-    const startsOrEndsCode = /^```/.test(line.trim());
+    const fenceMatch = line.trim().match(/^(`{3,})/);
 
-    // Track code-block state
-    if (startsOrEndsCode) inCodeBlock = !inCodeBlock;
+    if (fenceMatch) {
+      const fenceLen = fenceMatch[1].length;
+      if (!inCodeBlock) {
+        // Opening fence
+        inCodeBlock = true;
+        codeFenceLen = fenceLen;
+        current.push(line);
+        currentLen += lineLen;
+        continue;
+      } else if (fenceLen >= codeFenceLen) {
+        // Closing fence (must have >= backticks than opening)
+        inCodeBlock = false;
+        codeFenceLen = 0;
+        current.push(line);
+        currentLen += lineLen;
+        // Flush after the code block closes if we're over the limit
+        if (currentLen >= maxChars) flush();
+        continue;
+      }
+      // Inner fence with fewer backticks — treat as content, fall through
+    }
 
-    // If we're inside a code block, keep accumulating regardless of size.
-    // The only exception is when the code block just closed on this line —
-    // we can flush after adding it.
-    if (inCodeBlock || (startsOrEndsCode && !inCodeBlock)) {
+    if (inCodeBlock) {
       current.push(line);
       currentLen += lineLen;
-      // If the code block just closed and we're over the limit, flush
-      if (!inCodeBlock && currentLen >= maxChars) flush();
       continue;
     }
 
@@ -476,11 +504,14 @@ export async function translateArticle(opts: {
 
 /**
  * Drop all cached + persisted translations for an article. Called from
- * lib/articles.ts whenever the source article changes or is deleted so a stale
- * revision is never served (the DB rows also cascade-delete with the article).
+ * lib/articles.ts whenever the source article is edited so a stale revision is
+ * never served.
  *
  * Also resets the translation rate limit counters (translationCount and
  * lastTranslationAt) since the article content has changed.
+ *
+ * Cache eviction is scoped to the article (prefix `cache:translation:${id}:`)
+ * so other articles' translations are not collateral damage.
  */
 export async function invalidateArticleTranslations(articleId: string): Promise<void> {
   try {
@@ -500,7 +531,16 @@ export async function invalidateArticleTranslations(articleId: string): Promise<
   } catch (err) {
     log.warn("failed to reset translation rate limit for", articleId, err);
   }
-  // Cache keys are `${articleId}:${locale}`; clearing the whole category is the
-  // simplest correct eviction given the KV helper's prefix granularity.
-  await invalidate("translation");
+  // Per-article cache eviction: keys are `cache:translation:${articleId}:${locale}`
+  await invalidateByPrefix("translation", `${articleId}:`);
+}
+
+/**
+ * Evict cached translations for an article whose DB rows have already been
+ * cascade-deleted (i.e. the article itself was deleted). Only clears the
+ * cache — no DB writes needed since the rows are gone and the article no
+ * longer exists for rate-limit reset.
+ */
+export async function evictArticleTranslationCache(articleId: string): Promise<void> {
+  await invalidateByPrefix("translation", `${articleId}:`);
 }

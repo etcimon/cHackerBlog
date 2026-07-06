@@ -263,6 +263,31 @@ describe("extractCodeBlocks / restoreCodeBlocks", () => {
     // Translated prose is preserved
     expect(restored).toContain("# TITLE");
   });
+
+  it("handles 4-backtick fences from Turndown (code containing nested ```)", () => {
+    // Turndown uses 4-backtick fences when code content contains ``` lines
+    const md = "````ts\nlet x = 1;\n```nested\nfoo()\n```\nlet y = 2;\n````\n\nText.\n";
+    const { markdown, codeBlocks } = extractCodeBlocks(md);
+
+    // The entire code block should be extracted as one unit
+    expect(codeBlocks).toHaveLength(1);
+    expect(codeBlocks[0]).toBe(md.split("\n").slice(0, 7).join("\n"));
+    // The inner ``` lines should NOT appear in the stripped markdown
+    expect(markdown).not.toContain("```nested");
+    expect(markdown).not.toContain("foo()");
+    expect(markdown).not.toContain("let y = 2;");
+    // Placeholder should be present
+    expect(markdown).toContain("<!--CB0-->");
+    // Surrounding text preserved
+    expect(markdown).toContain("Text.");
+  });
+
+  it("round-trips 4-backtick code blocks through extract + restore", () => {
+    const md = "# Title\n\n````ts\nlet x = 1;\n```inner\nbar()\n```\nlet y = 2;\n````\n\nEnd.\n";
+    const { markdown, codeBlocks } = extractCodeBlocks(md);
+    const restored = restoreCodeBlocks(markdown, codeBlocks);
+    expect(restored).toBe(md);
+  });
 });
 
 describe("translated body survives a second HTML -> Markdown reduction", () => {

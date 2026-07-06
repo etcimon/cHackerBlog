@@ -83,6 +83,22 @@ export async function invalidate(
 }
 
 /**
+ * Invalidate all keys within a category that share a common id prefix.
+ * Use this when keys are namespaced (e.g. `${articleId}:${locale}`) and you
+ * want to evict all entries for one article without nuking the entire category.
+ */
+export async function invalidateByPrefix(
+  category: CacheCategory,
+  idPrefix: string,
+): Promise<void> {
+  try {
+    await kvDelByPrefix(`cache:${category}:${idPrefix}`);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
  * Simple get/set functions for non-categorized cache entries.
  * Used for global rate limiting and other cross-category counters.
  */

@@ -11,7 +11,7 @@ import { truncateContent } from "@/lib/types";
 import { extractPreviewHtml } from "@/lib/embeds";
 import { deriveSeo } from "@/lib/seo";
 import { getSettings } from "@/lib/settings";
-import { invalidateArticleTranslations } from "@/lib/grok";
+import { invalidateArticleTranslations, evictArticleTranslationCache } from "@/lib/grok";
 
 /** Slugs reserved for legal pages — excluded from the main feed. */
 export const LEGAL_SLUGS = ["terms-conditions", "privacy-policy"] as const;
@@ -372,6 +372,13 @@ export async function updateArticlePartial(id: string, input: { published?: bool
   });
   await invalidate("article", id);
   await invalidate("feed");
+  // If the article was unpublished, evict cached translations so they are not
+  // served for a draft. DB rows are kept (the article still exists and may be
+  // re-published); only the cache is cleared to force a fresh lookup that will
+  // respect the published check in getArticleTranslationSource.
+  if (input.published === false) {
+    await evictArticleTranslationCache(id);
+  }
   return article;
 }
 
@@ -380,8 +387,8 @@ export async function deleteArticle(id: string) {
   await prisma.article.delete({ where: { id } });
   await invalidate("article", id);
   await invalidate("feed");
-  // Persisted translations cascade-delete with the article; clear their cache.
-  await invalidateArticleTranslations(id);
+  // Persisted translations cascade-delete with the article; only evict cache.
+  await evictArticleTranslationCache(id);
 }
 
 export async function listAllTags() {
