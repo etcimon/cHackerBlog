@@ -19,6 +19,13 @@
     "translating": "Translating…",
     "failed": "Translation failed"
   },
+  "legal": {
+    "terms": "Terms",
+    "privacy": "Privacy",
+    "save": "Save",
+    "cancel": "Cancel",
+    "published": "Published"
+  },
   "comments": {
     "title": "Comments",
     "post": "Post comment",

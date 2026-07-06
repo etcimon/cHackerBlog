@@ -19,6 +19,13 @@
     "translating": "翻訳中…",
     "failed": "翻訳に失敗しました"
   },
+  "legal": {
+    "terms": "利用規約",
+    "privacy": "プライバシー",
+    "save": "保存",
+    "cancel": "キャンセル",
+    "published": "公開済み"
+  },
   "comments": {
     "title": "コメント",
     "post": "コメントを投稿",

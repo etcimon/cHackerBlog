@@ -13,6 +13,14 @@ import { deriveSeo } from "@/lib/seo";
 import { getSettings } from "@/lib/settings";
 import { invalidateArticleTranslations } from "@/lib/grok";
 
+/** Slugs reserved for legal pages — excluded from the main feed. */
+export const LEGAL_SLUGS = ["terms-conditions", "privacy-policy"] as const;
+export type LegalSlug = (typeof LEGAL_SLUGS)[number];
+
+function isLegalSlug(slug: string): boolean {
+  return (LEGAL_SLUGS as readonly string[]).includes(slug);
+}
+
 function slugify(input: string): string {
   return input
     .toLowerCase()
@@ -114,6 +122,7 @@ export async function getFeed(query: FeedQuery): Promise<FeedPage> {
     const prisma = getPrisma();
     const rows = await prisma.article.findMany({
       where: {
+        slug: { notIn: [...LEGAL_SLUGS] },
         ...(query.locale ? { locale: query.locale } : {}),
         ...(query.tag ? { tags: { some: { slug: query.tag } } } : {}),
       },
@@ -155,6 +164,7 @@ export async function getFeed(query: FeedQuery): Promise<FeedPage> {
     const rows = await prisma.article.findMany({
       where: {
         published: true,
+        slug: { notIn: [...LEGAL_SLUGS] },
         ...(query.locale ? { locale: query.locale } : {}),
         ...(query.tag ? { tags: { some: { slug: query.tag } } } : {}),
       },
@@ -385,7 +395,7 @@ export async function listAllTags() {
       _count: {
         select: {
           articles: {
-            where: { published: true },
+            where: { published: true, slug: { notIn: [...LEGAL_SLUGS] } },
           },
         },
       },
@@ -397,7 +407,10 @@ export async function listAllTags() {
 export async function getTotalArticleCount(includeUnpublished = false) {
   const prisma = getPrisma();
   return prisma.article.count({
-    where: includeUnpublished ? undefined : { published: true },
+    where: {
+      slug: { notIn: [...LEGAL_SLUGS] },
+      ...(includeUnpublished ? {} : { published: true }),
+    },
   });
 }
 
@@ -413,4 +426,111 @@ export async function deleteTag(slug: string) {
   }
   
   await prisma.tag.delete({ where: { slug } });
+}
+
+/**
+ * Fetch a legal article by its slug. Returns null if not found. For public
+ * access, only returns published articles with non-empty content.
+ */
+export async function getLegalArticle(
+  slug: string,
+  opts: { includeUnpublished?: boolean } = {},
+): Promise<{ id: string; slug: string; title: string; content: string; published: boolean } | null> {
+  if (!isLegalSlug(slug)) return null;
+  const prisma = getPrisma();
+  const article = await prisma.article.findUnique({
+    where: { slug },
+    select: { id: true, slug: true, title: true, content: true, published: true },
+  });
+  if (!article) return null;
+  if (!article.published && !opts.includeUnpublished) return null;
+  return article;
+}
+
+/**
+ * Check the status of all legal articles. Used by the footer to decide
+ * whether to show links to the public (published + non-empty) or to the
+ * admin (empty/missing → edit prompt).
+ */
+export async function getLegalStatus(): Promise<
+  Record<string, { exists: boolean; published: boolean; hasContent: boolean }>
+> {
+  const prisma = getPrisma();
+  const result: Record<string, { exists: boolean; published: boolean; hasContent: boolean }> = {};
+  for (const slug of LEGAL_SLUGS) {
+    const article = await prisma.article.findUnique({
+      where: { slug },
+      select: { content: true, published: true },
+    });
+    const hasContent = !!article && article.content.replace(/<[^>]*>/g, "").trim().length > 0;
+    result[slug] = {
+      exists: !!article,
+      published: article?.published ?? false,
+      hasContent,
+    };
+  }
+  return result;
+}
+
+/**
+ * Create or update a legal article by its reserved slug. The slug is forced
+ * (not derived from the title) so the legal pages always live at their
+ * canonical URLs.
+ */
+export async function createOrUpdateLegalArticle(
+  slug: string,
+  input: { title: string; content: string; published: boolean },
+) {
+  if (!isLegalSlug(slug)) throw new Error("Invalid legal slug");
+  const prisma = getPrisma();
+  const settings = await getSettings();
+  const seo = deriveSeo({
+    content: input.content,
+    coverUrl: null,
+    faviconUrl: settings.faviconUrl,
+    appUrl: env.APP_URL,
+  });
+
+  const existing = await prisma.article.findUnique({ where: { slug } });
+
+  if (existing) {
+    // If content is empty, delete the article (same behaviour as regular edit)
+    const isEmptyContent =
+      !input.content ||
+      input.content.trim() === "" ||
+      input.content.replace(/<[^>]*>/g, "").trim() === "";
+    if (isEmptyContent) {
+      await deleteArticle(existing.id);
+      return null;
+    }
+
+    const article = await prisma.article.update({
+      where: { id: existing.id },
+      data: {
+        title: input.title,
+        content: input.content,
+        published: input.published,
+        ...seo,
+      },
+    });
+    await invalidate("article", existing.id);
+    await invalidate("feed");
+    await invalidateArticleTranslations(existing.id);
+    return article;
+  }
+
+  const article = await prisma.article.create({
+    data: {
+      slug,
+      title: input.title,
+      content: input.content,
+      coverUrl: null,
+      locale: "en",
+      published: input.published,
+      tags: {},
+      ...seo,
+    },
+  });
+  await invalidate("feed");
+  return article;
 }

@@ -19,6 +19,13 @@
     "translating": "جارٍ الترجمة…",
     "failed": "فشلت الترجمة"
   },
+  "legal": {
+    "terms": "الشروط",
+    "privacy": "الخصوصية",
+    "save": "حفظ",
+    "cancel": "إلغاء",
+    "published": "منشور"
+  },
   "comments": {
     "title": "التعليقات",
     "post": "أضف تعليقًا",

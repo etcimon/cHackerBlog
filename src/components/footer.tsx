@@ -1,48 +1,320 @@
+"use client";
+
 /**
  * Site footer. Per branding requirement, the single-word product name is
  * "cHackerBlog", shown here and linked to the source repository.
+ *
+ * Also manages legal pages (Terms & Conditions, Privacy Policy):
+ *  - Admin sees faint links at the top-right when the articles are empty/missing;
+ *    clicking opens the WYSIWYG editor to create/edit them.
+ *  - Public sees faint links at the top-right only when the articles exist,
+ *    are published, and have content; clicking opens a read-only modal.
  */
-import { Github } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Github, X } from "lucide-react";
 import { LanguageSwitcher } from "@/components/language-switcher";
+import { useAdmin } from "@/components/admin-context";
+import { useI18n } from "@/lib/use-i18n";
+import { useToast } from "@/components/toast";
+import { api, ApiClientError } from "@/lib/api-client";
+import { Wysiwyg } from "@/components/wysiwyg";
 
-export function Footer({ xHandle, linkedinUrl }: { xHandle?: string | null; linkedinUrl?: string | null }) {
+type LegalStatus = Record<
+  string,
+  { exists: boolean; published: boolean; hasContent: boolean }
+>;
+
+type LegalArticle = {
+  id: string;
+  slug: string;
+  title: string;
+  content: string;
+  published: boolean;
+};
+
+const LEGAL_SLUGS = ["terms-conditions", "privacy-policy"] as const;
+
+export function Footer({
+  xHandle,
+  linkedinUrl,
+}: {
+  xHandle?: string | null;
+  linkedinUrl?: string | null;
+}) {
+  const { isAdmin } = useAdmin();
+  const { t } = useI18n();
+  const toast = useToast();
+  const [status, setStatus] = useState<LegalStatus | null>(null);
+  const [editingSlug, setEditingSlug] = useState<string | null>(null);
+  const [readingSlug, setReadingSlug] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editContent, setEditContent] = useState("");
+  const [editPublished, setEditPublished] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [readingArticle, setReadingArticle] = useState<LegalArticle | null>(null);
+  const [loadingRead, setLoadingRead] = useState(false);
+
+  // Fetch legal status on mount and when admin status changes
+  const refreshStatus = useCallback(async () => {
+    try {
+      const s = await api.get<LegalStatus>("/api/legal");
+      setStatus(s);
+    } catch {
+      // silently ignore — legal links are non-critical
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshStatus();
+  }, [refreshStatus, isAdmin]);
+
+  // Open admin editor for a legal slug
+  const openEditor = useCallback(
+    async (slug: string) => {
+      setEditingSlug(slug);
+      setEditContent("");
+      setEditPublished(true);
+      try {
+        const article = await api.get<LegalArticle>(
+          `/api/legal/${slug}`,
+        );
+        setEditTitle(article.title);
+        setEditContent(article.content);
+        setEditPublished(article.published);
+      } catch {
+        // Not found — pre-fill with a default title
+        setEditTitle(
+          slug === "terms-conditions" ? "Terms & Conditions" : "Privacy Policy",
+        );
+      }
+    },
+    [],
+  );
+
+  // Save legal article
+  const handleSave = useCallback(async () => {
+    if (!editingSlug) return;
+    setSubmitting(true);
+    try {
+      await api.put(`/api/legal/${editingSlug}`, {
+        title: editTitle,
+        content: editContent,
+        published: editPublished,
+      });
+      toast.success("Saved");
+      setEditingSlug(null);
+      void refreshStatus();
+    } catch (err) {
+      toast.error(
+        err instanceof ApiClientError ? err.message : "Save failed",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }, [editingSlug, editTitle, editContent, editPublished, toast, refreshStatus]);
+
+  // Open public read modal
+  const openReader = useCallback(async (slug: string) => {
+    setReadingSlug(slug);
+    setLoadingRead(true);
+    setReadingArticle(null);
+    try {
+      const article = await api.get<LegalArticle>(`/api/legal/${slug}`);
+      setReadingArticle(article);
+    } catch {
+      setReadingSlug(null);
+    } finally {
+      setLoadingRead(false);
+    }
+  }, []);
+
+  // Determine visibility for each slug
+  const links = LEGAL_SLUGS.map((slug) => {
+    const s = status?.[slug];
+    const isReady = s?.exists && s.published && s.hasContent;
+    const label =
+      slug === "terms-conditions" ? t("legal.terms") : t("legal.privacy");
+    return { slug, label, isReady: !!isReady };
+  });
+
   return (
-    <footer className="mt-16 border-t border-border py-8 text-center text-sm text-muted">
-      <div className="mb-3 flex items-center justify-center gap-4">
-        <LanguageSwitcher />
-        {xHandle && (
-          <a
-            href={`https://x.com/${xHandle.replace(/^@/, "")}`}
-            target="_blank"
-            rel="noreferrer"
-            className="transition-colors hover:text-accent"
-          >
-            X / @{xHandle.replace(/^@/, "")}
-          </a>
-        )}
-        {linkedinUrl && (
-          <a
-            href={linkedinUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="transition-colors hover:text-accent"
-          >
-            LinkedIn
-          </a>
-        )}
+    <>
+      {/* Faint legal links at the top-right */}
+      <div className="fixed right-3 top-3 z-30 flex items-center gap-2 text-[10px] text-muted/40">
+        {links.map(({ slug, label, isReady }, idx) => {
+          // Admin: always show and always open the editor
+          if (isAdmin) {
+            return (
+              <span key={slug} className="flex items-center gap-2">
+                {idx > 0 && <span className="text-muted/30">·</span>}
+                <button
+                  onClick={() => openEditor(slug)}
+                  className="transition-colors hover:text-muted"
+                  title={`Edit ${label}`}
+                >
+                  {label}
+                </button>
+              </span>
+            );
+          }
+          // Public: show if ready (published + has content)
+          if (isReady) {
+            return (
+              <span key={slug} className="flex items-center gap-2">
+                {idx > 0 && <span className="text-muted/30">·</span>}
+                <button
+                  onClick={() => openReader(slug)}
+                  className="transition-colors hover:text-muted"
+                >
+                  {label}
+                </button>
+              </span>
+            );
+          }
+          return null;
+        })}
       </div>
-      <p className="flex items-center justify-center gap-1.5">
-        Powered by{" "}
-        <a
-          href="https://github.com/etcimon/chackerblog"
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1 font-semibold text-accent transition-opacity hover:opacity-80"
+
+      <footer className="mt-16 border-t border-border py-8 text-center text-sm text-muted">
+        <div className="mb-3 flex items-center justify-center gap-4">
+          <LanguageSwitcher />
+          {xHandle && (
+            <a
+              href={`https://x.com/${xHandle.replace(/^@/, "")}`}
+              target="_blank"
+              rel="noreferrer"
+              className="transition-colors hover:text-accent"
+            >
+              X / @{xHandle.replace(/^@/, "")}
+            </a>
+          )}
+          {linkedinUrl && (
+            <a
+              href={linkedinUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="transition-colors hover:text-accent"
+            >
+              LinkedIn
+            </a>
+          )}
+        </div>
+        <p className="flex items-center justify-center gap-1.5">
+          Powered by{" "}
+          <a
+            href="https://github.com/etcimon/chackerblog"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 font-semibold text-accent transition-opacity hover:opacity-80"
+          >
+            <Github className="h-4 w-4" />
+            cHackerBlog
+          </a>
+        </p>
+      </footer>
+
+      {/* Admin legal editor modal */}
+      {editingSlug && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4 animate-fade-in">
+          <div className="my-8 w-full max-w-3xl rounded-lg border border-border bg-card p-6 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="font-heading text-xl font-bold text-fg">
+                {editingSlug === "terms-conditions"
+                  ? t("legal.terms")
+                  : t("legal.privacy")}
+              </h3>
+              <button
+                onClick={() => setEditingSlug(null)}
+                className="text-muted transition-colors hover:text-fg"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="mb-4">
+              <label className="mb-1 block text-sm text-muted">Title</label>
+              <input
+                type="text"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                className="w-full rounded-md border border-border bg-bg px-3 py-2 text-fg"
+              />
+            </div>
+            <div className="mb-4">
+              <label className="mb-1 block text-sm text-muted">Content</label>
+              <Wysiwyg value={editContent} onChange={setEditContent} />
+            </div>
+            <div className="mb-4 flex items-center gap-2">
+              <label className="flex items-center gap-2 text-sm text-muted">
+                <input
+                  type="checkbox"
+                  checked={editPublished}
+                  onChange={(e) => setEditPublished(e.target.checked)}
+                />
+                {t("legal.published")}
+              </label>
+            </div>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setEditingSlug(null)}
+                className="rounded-md border border-border px-4 py-2 text-sm text-muted transition-colors hover:text-fg"
+              >
+                {t("legal.cancel")}
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={submitting}
+                className="rounded-md border border-accent bg-accent px-4 py-2 text-sm font-semibold text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
+              >
+                {submitting ? "…" : t("legal.save")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Public legal read modal */}
+      {readingSlug && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4 animate-fade-in"
+          onClick={() => {
+            setReadingSlug(null);
+            setReadingArticle(null);
+          }}
         >
-          <Github className="h-4 w-4" />
-          cHackerBlog
-        </a>
-      </p>
-    </footer>
+          <div
+            className="my-8 w-full max-w-3xl rounded-lg border border-border bg-card p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="font-heading text-xl font-bold text-fg">
+                {readingArticle?.title ??
+                  (readingSlug === "terms-conditions"
+                    ? t("legal.terms")
+                    : t("legal.privacy"))}
+              </h3>
+              <button
+                onClick={() => {
+                  setReadingSlug(null);
+                  setReadingArticle(null);
+                }}
+                className="text-muted transition-colors hover:text-fg"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            {loadingRead ? (
+              <p className="py-10 text-center text-muted">Loading…</p>
+            ) : readingArticle ? (
+              <div
+                className="article-body article-rendered text-lg text-fg/90"
+                dangerouslySetInnerHTML={{ __html: readingArticle.content }}
+              />
+            ) : (
+              <p className="py-10 text-center text-muted">No content available.</p>
+            )}
+          </div>
+        </div>
+      )}
+    </>
   );
 }

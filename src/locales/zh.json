@@ -19,6 +19,13 @@
     "translating": "翻译中…",
     "failed": "翻译失败"
   },
+  "legal": {
+    "terms": "条款",
+    "privacy": "隐私",
+    "save": "保存",
+    "cancel": "取消",
+    "published": "已发布"
+  },
   "comments": {
     "title": "评论",
     "post": "发表评论",
