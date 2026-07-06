@@ -438,17 +438,37 @@ export async function deleteTag(slug: string) {
  */
 export async function getLegalArticle(
   slug: string,
-  opts: { includeUnpublished?: boolean } = {},
-): Promise<{ id: string; slug: string; title: string; content: string; published: boolean } | null> {
+  opts: { includeUnpublished?: boolean; locale?: string } = {},
+): Promise<{ id: string; slug: string; title: string; content: string; published: boolean; translated?: boolean } | null> {
   if (!isLegalSlug(slug)) return null;
   const prisma = getPrisma();
   const article = await prisma.article.findUnique({
     where: { slug },
-    select: { id: true, slug: true, title: true, content: true, published: true },
+    select: { id: true, slug: true, title: true, content: true, published: true, locale: true },
   });
   if (!article) return null;
   if (!article.published && !opts.includeUnpublished) return null;
-  return article;
+
+  // If a locale is requested and it differs from the article's own locale,
+  // attempt to serve an existing ArticleTranslation for that locale.
+  if (opts.locale && opts.locale !== article.locale) {
+    const translation = await prisma.articleTranslation.findUnique({
+      where: { articleId_locale: { articleId: article.id, locale: opts.locale } },
+      select: { title: true, content: true },
+    });
+    if (translation) {
+      return {
+        id: article.id,
+        slug: article.slug,
+        title: translation.title,
+        content: translation.content,
+        published: article.published,
+        translated: true,
+      };
+    }
+  }
+
+  return { id: article.id, slug: article.slug, title: article.title, content: article.content, published: article.published };
 }
 
 /**
@@ -537,4 +557,49 @@ export async function createOrUpdateLegalArticle(
   });
   await invalidate("feed");
   return article;
+}
+
+/**
+ * Upsert a manual translation for a legal article into the ArticleTranslation
+ * table. Used when an admin edits the legal page in a non-default locale — the
+ * base article is preserved and the translation is stored/updated separately.
+ * If the content is empty, the translation row is deleted instead.
+ */
+export async function upsertLegalTranslation(
+  slug: string,
+  locale: string,
+  input: { title: string; content: string },
+) {
+  if (!isLegalSlug(slug)) throw new Error("Invalid legal slug");
+  const prisma = getPrisma();
+  const article = await prisma.article.findUnique({ where: { slug } });
+  if (!article) throw new Error("Legal article not found");
+
+  const isEmptyContent =
+    !input.content ||
+    input.content.trim() === "" ||
+    input.content.replace(/<[^>]*>/g, "").trim() === "";
+
+  if (isEmptyContent) {
+    await prisma.articleTranslation.deleteMany({
+      where: { articleId: article.id, locale },
+    }).catch(() => {});
+    await invalidate("translation", `${article.id}:${locale}`);
+    return null;
+  }
+
+  const translation = await prisma.articleTranslation.upsert({
+    where: { articleId_locale: { articleId: article.id, locale } },
+    update: { title: input.title, content: input.content, sourceLocale: article.locale },
+    create: {
+      articleId: article.id,
+      locale,
+      sourceLocale: article.locale,
+      title: input.title,
+      content: input.content,
+    },
+  });
+
+  await invalidate("translation", `${article.id}:${locale}`);
+  return translation;
 }

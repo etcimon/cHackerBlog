@@ -5,11 +5,12 @@
  * tag is lifted to the Feed component). "All" clears the filter.
  */
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { X } from "lucide-react";
 import type { TagItem } from "@/lib/types";
 import { api } from "@/lib/api-client";
 import { useToast } from "@/components/toast";
+import { localeFromPathname } from "@/lib/use-i18n";
 
 interface Props {
   tags: TagItem[];
@@ -21,6 +22,7 @@ interface Props {
 
 export function TagBar({ tags, active, onSelect, isAdmin = false, totalCount }: Props) {
   const router = useRouter();
+  const pathname = usePathname();
   const toast = useToast();
   const [deletingTag, setDeletingTag] = useState<string | null>(null);
 
@@ -46,7 +48,8 @@ export function TagBar({ tags, active, onSelect, isAdmin = false, totalCount }: 
         <button
           onClick={() => {
             onSelect(null);
-            router.push("/");
+            const locale = localeFromPathname(pathname);
+            router.push(locale ? `/${locale}` : "/");
           }}
           className={`flex items-center gap-1 rounded-full border px-3 py-1 text-sm transition-colors ${
             active === null

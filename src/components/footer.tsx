@@ -15,6 +15,7 @@ import { Github, X } from "lucide-react";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { useAdmin } from "@/components/admin-context";
 import { useI18n } from "@/lib/use-i18n";
+import { DEFAULT_LOCALE } from "@/lib/i18n";
 import { useToast } from "@/components/toast";
 import { api, ApiClientError } from "@/lib/api-client";
 import { Wysiwyg } from "@/components/wysiwyg";
@@ -30,6 +31,7 @@ type LegalArticle = {
   title: string;
   content: string;
   published: boolean;
+  translated?: boolean;
 };
 
 const LEGAL_SLUGS = ["terms-conditions", "privacy-policy"] as const;
@@ -42,7 +44,7 @@ export function Footer({
   linkedinUrl?: string | null;
 }) {
   const { isAdmin } = useAdmin();
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const toast = useToast();
   const [status, setStatus] = useState<LegalStatus | null>(null);
   const [editingSlug, setEditingSlug] = useState<string | null>(null);
@@ -87,15 +89,19 @@ export function Footer({
     };
   }, []);
 
-  // Open admin editor for a legal slug
+  // Open admin editor for a legal slug. When the admin's selected locale
+  // differs from the base article's locale, the editor loads the translation
+  // for that locale (or an empty shell if none exists yet). Saving upserts
+  // the translation row via the locale parameter on the PUT endpoint.
   const openEditor = useCallback(
     async (slug: string) => {
       setEditingSlug(slug);
       setEditContent("");
       setEditPublished(true);
       try {
+        const params = locale !== DEFAULT_LOCALE ? `?locale=${locale}` : "";
         const article = await api.get<LegalArticle>(
-          `/api/legal/${slug}`,
+          `/api/legal/${slug}${params}`,
         );
         setEditTitle(article.title);
         setEditContent(article.content);
@@ -107,10 +113,12 @@ export function Footer({
         );
       }
     },
-    [],
+    [locale],
   );
 
-  // Save legal article
+  // Save legal article. When the admin's selected locale differs from the
+  // base article's locale, the locale is sent so the PUT endpoint upserts a
+  // translation row instead of modifying the base article.
   const handleSave = useCallback(async () => {
     if (!editingSlug) return;
     setSubmitting(true);
@@ -119,6 +127,7 @@ export function Footer({
         title: editTitle,
         content: editContent,
         published: editPublished,
+        ...(locale !== DEFAULT_LOCALE ? { locale } : {}),
       });
       toast.success("Saved");
       setEditingSlug(null);
@@ -130,22 +139,24 @@ export function Footer({
     } finally {
       setSubmitting(false);
     }
-  }, [editingSlug, editTitle, editContent, editPublished, toast, refreshStatus]);
+  }, [editingSlug, editTitle, editContent, editPublished, toast, refreshStatus, locale]);
 
-  // Open public read modal
+  // Open public read modal. Passes the visitor's locale so the server can
+  // return a translated version when one exists, falling back to the default.
   const openReader = useCallback(async (slug: string) => {
     setReadingSlug(slug);
     setLoadingRead(true);
     setReadingArticle(null);
     try {
-      const article = await api.get<LegalArticle>(`/api/legal/${slug}`);
+      const params = locale !== DEFAULT_LOCALE ? `?locale=${locale}` : "";
+      const article = await api.get<LegalArticle>(`/api/legal/${slug}${params}`);
       setReadingArticle(article);
     } catch {
       setReadingSlug(null);
     } finally {
       setLoadingRead(false);
     }
-  }, []);
+  }, [locale]);
 
   // Determine visibility for each slug
   const links = LEGAL_SLUGS.map((slug) => {
@@ -159,10 +170,13 @@ export function Footer({
   return (
     <>
       {/* Top-right controls: language switcher + legal links + github */}
-      {showTopRight && (
+      {showTopRight && (() => {
+        const visibleLinks = links.filter((l) => isAdmin || l.isReady);
+        const hasVisibleLinks = visibleLinks.length > 0;
+        return (
       <div className="absolute right-3 top-3 z-30 flex items-center gap-2 text-[10px] text-muted/40">
         <LanguageSwitcher />
-        <span className="text-muted/30">·</span>
+        {hasVisibleLinks && <span className="text-muted/30">·</span>}
         {links.map(({ slug, label, isReady }, idx) => {
           // Admin: always show and always open the editor
           if (isAdmin) {
@@ -195,7 +209,7 @@ export function Footer({
           }
           return null;
         })}
-        <span className="text-muted/30">·</span>
+        {hasVisibleLinks && <span className="text-muted/30">·</span>}
         <a
           href="https://github.com/etcimon/chackerblog"
           target="_blank"
@@ -206,12 +220,13 @@ export function Footer({
           <Github className="h-3 w-3" />
         </a>
       </div>
-      )}
+        );
+      })()}
 
       <footer className="mt-16 border-t border-border py-8 text-center text-sm text-muted">
         <div className="mb-3 flex items-center justify-center gap-4">
           <LanguageSwitcher />
-          <span className="text-muted/30">·</span>
+          {(isAdmin || links.some((l) => l.isReady)) && <span className="text-muted/30">·</span>}
           {links.map(({ slug, label, isReady }, idx) => {
             if (isAdmin) {
               return (
