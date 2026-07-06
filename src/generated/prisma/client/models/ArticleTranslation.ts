@@ -35,6 +35,7 @@ export type ArticleTranslationMinAggregateOutputType = {
   sourceLocale: string | null
   title: string | null
   content: string | null
+  published: boolean | null
   createdAt: Date | null
   updatedAt: Date | null
 }
@@ -46,6 +47,7 @@ export type ArticleTranslationMaxAggregateOutputType = {
   sourceLocale: string | null
   title: string | null
   content: string | null
+  published: boolean | null
   createdAt: Date | null
   updatedAt: Date | null
 }
@@ -57,6 +59,7 @@ export type ArticleTranslationCountAggregateOutputType = {
   sourceLocale: number
   title: number
   content: number
+  published: number
   createdAt: number
   updatedAt: number
   _all: number
@@ -70,6 +73,7 @@ export type ArticleTranslationMinAggregateInputType = {
   sourceLocale?: true
   title?: true
   content?: true
+  published?: true
   createdAt?: true
   updatedAt?: true
 }
@@ -81,6 +85,7 @@ export type ArticleTranslationMaxAggregateInputType = {
   sourceLocale?: true
   title?: true
   content?: true
+  published?: true
   createdAt?: true
   updatedAt?: true
 }
@@ -92,6 +97,7 @@ export type ArticleTranslationCountAggregateInputType = {
   sourceLocale?: true
   title?: true
   content?: true
+  published?: true
   createdAt?: true
   updatedAt?: true
   _all?: true
@@ -176,6 +182,7 @@ export type ArticleTranslationGroupByOutputType = {
   sourceLocale: string
   title: string
   content: string
+  published: boolean
   createdAt: Date
   updatedAt: Date
   _count: ArticleTranslationCountAggregateOutputType | null
@@ -208,6 +215,7 @@ export type ArticleTranslationWhereInput = {
   sourceLocale?: Prisma.StringFilter<"ArticleTranslation"> | string
   title?: Prisma.StringFilter<"ArticleTranslation"> | string
   content?: Prisma.StringFilter<"ArticleTranslation"> | string
+  published?: Prisma.BoolFilter<"ArticleTranslation"> | boolean
   createdAt?: Prisma.DateTimeFilter<"ArticleTranslation"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"ArticleTranslation"> | Date | string
   article?: Prisma.XOR<Prisma.ArticleScalarRelationFilter, Prisma.ArticleWhereInput>
@@ -220,6 +228,7 @@ export type ArticleTranslationOrderByWithRelationInput = {
   sourceLocale?: Prisma.SortOrder
   title?: Prisma.SortOrder
   content?: Prisma.SortOrder
+  published?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
   article?: Prisma.ArticleOrderByWithRelationInput
@@ -236,6 +245,7 @@ export type ArticleTranslationWhereUniqueInput = Prisma.AtLeast<{
   sourceLocale?: Prisma.StringFilter<"ArticleTranslation"> | string
   title?: Prisma.StringFilter<"ArticleTranslation"> | string
   content?: Prisma.StringFilter<"ArticleTranslation"> | string
+  published?: Prisma.BoolFilter<"ArticleTranslation"> | boolean
   createdAt?: Prisma.DateTimeFilter<"ArticleTranslation"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"ArticleTranslation"> | Date | string
   article?: Prisma.XOR<Prisma.ArticleScalarRelationFilter, Prisma.ArticleWhereInput>
@@ -248,6 +258,7 @@ export type ArticleTranslationOrderByWithAggregationInput = {
   sourceLocale?: Prisma.SortOrder
   title?: Prisma.SortOrder
   content?: Prisma.SortOrder
+  published?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
   _count?: Prisma.ArticleTranslationCountOrderByAggregateInput
@@ -265,6 +276,7 @@ export type ArticleTranslationScalarWhereWithAggregatesInput = {
   sourceLocale?: Prisma.StringWithAggregatesFilter<"ArticleTranslation"> | string
   title?: Prisma.StringWithAggregatesFilter<"ArticleTranslation"> | string
   content?: Prisma.StringWithAggregatesFilter<"ArticleTranslation"> | string
+  published?: Prisma.BoolWithAggregatesFilter<"ArticleTranslation"> | boolean
   createdAt?: Prisma.DateTimeWithAggregatesFilter<"ArticleTranslation"> | Date | string
   updatedAt?: Prisma.DateTimeWithAggregatesFilter<"ArticleTranslation"> | Date | string
 }
@@ -275,6 +287,7 @@ export type ArticleTranslationCreateInput = {
   sourceLocale?: string
   title: string
   content: string
+  published?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
   article: Prisma.ArticleCreateNestedOneWithoutTranslationsInput
@@ -287,6 +300,7 @@ export type ArticleTranslationUncheckedCreateInput = {
   sourceLocale?: string
   title: string
   content: string
+  published?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
 }
@@ -297,6 +311,7 @@ export type ArticleTranslationUpdateInput = {
   sourceLocale?: Prisma.StringFieldUpdateOperationsInput | string
   title?: Prisma.StringFieldUpdateOperationsInput | string
   content?: Prisma.StringFieldUpdateOperationsInput | string
+  published?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   article?: Prisma.ArticleUpdateOneRequiredWithoutTranslationsNestedInput
@@ -309,6 +324,7 @@ export type ArticleTranslationUncheckedUpdateInput = {
   sourceLocale?: Prisma.StringFieldUpdateOperationsInput | string
   title?: Prisma.StringFieldUpdateOperationsInput | string
   content?: Prisma.StringFieldUpdateOperationsInput | string
+  published?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -320,6 +336,7 @@ export type ArticleTranslationCreateManyInput = {
   sourceLocale?: string
   title: string
   content: string
+  published?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
 }
@@ -330,6 +347,7 @@ export type ArticleTranslationUpdateManyMutationInput = {
   sourceLocale?: Prisma.StringFieldUpdateOperationsInput | string
   title?: Prisma.StringFieldUpdateOperationsInput | string
   content?: Prisma.StringFieldUpdateOperationsInput | string
+  published?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -341,6 +359,7 @@ export type ArticleTranslationUncheckedUpdateManyInput = {
   sourceLocale?: Prisma.StringFieldUpdateOperationsInput | string
   title?: Prisma.StringFieldUpdateOperationsInput | string
   content?: Prisma.StringFieldUpdateOperationsInput | string
+  published?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -367,6 +386,7 @@ export type ArticleTranslationCountOrderByAggregateInput = {
   sourceLocale?: Prisma.SortOrder
   title?: Prisma.SortOrder
   content?: Prisma.SortOrder
+  published?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
 }
@@ -378,6 +398,7 @@ export type ArticleTranslationMaxOrderByAggregateInput = {
   sourceLocale?: Prisma.SortOrder
   title?: Prisma.SortOrder
   content?: Prisma.SortOrder
+  published?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
 }
@@ -389,6 +410,7 @@ export type ArticleTranslationMinOrderByAggregateInput = {
   sourceLocale?: Prisma.SortOrder
   title?: Prisma.SortOrder
   content?: Prisma.SortOrder
+  published?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
 }
@@ -441,6 +463,7 @@ export type ArticleTranslationCreateWithoutArticleInput = {
   sourceLocale?: string
   title: string
   content: string
+  published?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
 }
@@ -451,6 +474,7 @@ export type ArticleTranslationUncheckedCreateWithoutArticleInput = {
   sourceLocale?: string
   title: string
   content: string
+  published?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
 }
@@ -490,6 +514,7 @@ export type ArticleTranslationScalarWhereInput = {
   sourceLocale?: Prisma.StringFilter<"ArticleTranslation"> | string
   title?: Prisma.StringFilter<"ArticleTranslation"> | string
   content?: Prisma.StringFilter<"ArticleTranslation"> | string
+  published?: Prisma.BoolFilter<"ArticleTranslation"> | boolean
   createdAt?: Prisma.DateTimeFilter<"ArticleTranslation"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"ArticleTranslation"> | Date | string
 }
@@ -500,6 +525,7 @@ export type ArticleTranslationCreateManyArticleInput = {
   sourceLocale?: string
   title: string
   content: string
+  published?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
 }
@@ -510,6 +536,7 @@ export type ArticleTranslationUpdateWithoutArticleInput = {
   sourceLocale?: Prisma.StringFieldUpdateOperationsInput | string
   title?: Prisma.StringFieldUpdateOperationsInput | string
   content?: Prisma.StringFieldUpdateOperationsInput | string
+  published?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -520,6 +547,7 @@ export type ArticleTranslationUncheckedUpdateWithoutArticleInput = {
   sourceLocale?: Prisma.StringFieldUpdateOperationsInput | string
   title?: Prisma.StringFieldUpdateOperationsInput | string
   content?: Prisma.StringFieldUpdateOperationsInput | string
+  published?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -530,6 +558,7 @@ export type ArticleTranslationUncheckedUpdateManyWithoutArticleInput = {
   sourceLocale?: Prisma.StringFieldUpdateOperationsInput | string
   title?: Prisma.StringFieldUpdateOperationsInput | string
   content?: Prisma.StringFieldUpdateOperationsInput | string
+  published?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -543,6 +572,7 @@ export type ArticleTranslationSelect<ExtArgs extends runtime.Types.Extensions.In
   sourceLocale?: boolean
   title?: boolean
   content?: boolean
+  published?: boolean
   createdAt?: boolean
   updatedAt?: boolean
   article?: boolean | Prisma.ArticleDefaultArgs<ExtArgs>
@@ -555,6 +585,7 @@ export type ArticleTranslationSelectCreateManyAndReturn<ExtArgs extends runtime.
   sourceLocale?: boolean
   title?: boolean
   content?: boolean
+  published?: boolean
   createdAt?: boolean
   updatedAt?: boolean
   article?: boolean | Prisma.ArticleDefaultArgs<ExtArgs>
@@ -567,6 +598,7 @@ export type ArticleTranslationSelectUpdateManyAndReturn<ExtArgs extends runtime.
   sourceLocale?: boolean
   title?: boolean
   content?: boolean
+  published?: boolean
   createdAt?: boolean
   updatedAt?: boolean
   article?: boolean | Prisma.ArticleDefaultArgs<ExtArgs>
@@ -579,11 +611,12 @@ export type ArticleTranslationSelectScalar = {
   sourceLocale?: boolean
   title?: boolean
   content?: boolean
+  published?: boolean
   createdAt?: boolean
   updatedAt?: boolean
 }
 
-export type ArticleTranslationOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "articleId" | "locale" | "sourceLocale" | "title" | "content" | "createdAt" | "updatedAt", ExtArgs["result"]["articleTranslation"]>
+export type ArticleTranslationOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "articleId" | "locale" | "sourceLocale" | "title" | "content" | "published" | "createdAt" | "updatedAt", ExtArgs["result"]["articleTranslation"]>
 export type ArticleTranslationInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   article?: boolean | Prisma.ArticleDefaultArgs<ExtArgs>
 }
@@ -606,6 +639,7 @@ export type $ArticleTranslationPayload<ExtArgs extends runtime.Types.Extensions.
     sourceLocale: string
     title: string
     content: string
+    published: boolean
     createdAt: Date
     updatedAt: Date
   }, ExtArgs["result"]["articleTranslation"]>
@@ -1038,6 +1072,7 @@ export interface ArticleTranslationFieldRefs {
   readonly sourceLocale: Prisma.FieldRef<"ArticleTranslation", 'String'>
   readonly title: Prisma.FieldRef<"ArticleTranslation", 'String'>
   readonly content: Prisma.FieldRef<"ArticleTranslation", 'String'>
+  readonly published: Prisma.FieldRef<"ArticleTranslation", 'Boolean'>
   readonly createdAt: Prisma.FieldRef<"ArticleTranslation", 'DateTime'>
   readonly updatedAt: Prisma.FieldRef<"ArticleTranslation", 'DateTime'>
 }

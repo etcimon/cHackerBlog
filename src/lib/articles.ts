@@ -450,13 +450,16 @@ export async function getLegalArticle(
   if (!article.published && !opts.includeUnpublished) return null;
 
   // If a locale is requested and it differs from the article's own locale,
-  // attempt to serve an existing ArticleTranslation for that locale.
+  // attempt to serve an existing ArticleTranslation for that locale. Only
+  // serve the translation when it is published and has non-empty content;
+  // otherwise fall back to the base (default-locale) article so the reader
+  // never sees a blank or unpublished page.
   if (opts.locale && opts.locale !== article.locale) {
     const translation = await prisma.articleTranslation.findUnique({
       where: { articleId_locale: { articleId: article.id, locale: opts.locale } },
-      select: { title: true, content: true },
+      select: { title: true, content: true, published: true },
     });
-    if (translation) {
+    if (translation && translation.published && translation.content.replace(/<[^>]*>/g, "").trim().length > 0) {
       return {
         id: article.id,
         slug: article.slug,
@@ -568,7 +571,7 @@ export async function createOrUpdateLegalArticle(
 export async function upsertLegalTranslation(
   slug: string,
   locale: string,
-  input: { title: string; content: string },
+  input: { title: string; content: string; published: boolean },
 ) {
   if (!isLegalSlug(slug)) throw new Error("Invalid legal slug");
   const prisma = getPrisma();
@@ -590,13 +593,14 @@ export async function upsertLegalTranslation(
 
   const translation = await prisma.articleTranslation.upsert({
     where: { articleId_locale: { articleId: article.id, locale } },
-    update: { title: input.title, content: input.content, sourceLocale: article.locale },
+    update: { title: input.title, content: input.content, published: input.published, sourceLocale: article.locale },
     create: {
       articleId: article.id,
       locale,
       sourceLocale: article.locale,
       title: input.title,
       content: input.content,
+      published: input.published,
     },
   });
 

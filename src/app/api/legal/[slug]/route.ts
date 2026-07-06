@@ -54,6 +54,7 @@ export const PUT = handler<Ctx>(async (req, { params }) => {
     const translation = await upsertLegalTranslation(slug, input.locale, {
       title: input.title,
       content: input.content,
+      published: input.published,
     });
     if (translation === null) {
       return ok({ deleted: true });

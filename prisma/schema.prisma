@@ -112,6 +112,7 @@ model ArticleTranslation {
   sourceLocale String   @default("en") @map("source_locale")
   title        String   @map("title")
   content      String   @map("content")
+  published    Boolean  @default(true) @map("published")
 
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")

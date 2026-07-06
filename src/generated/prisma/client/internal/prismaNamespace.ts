@@ -866,6 +866,7 @@ export const ArticleTranslationScalarFieldEnum = {
   sourceLocale: 'sourceLocale',
   title: 'title',
   content: 'content',
+  published: 'published',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'
 } as const
