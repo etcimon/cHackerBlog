@@ -43,6 +43,7 @@ interface Props {
 
 export function ArticleCard({ item, expanded = false, onEdit }: Props) {
   const [open, setOpen] = useState(expanded);
+  const [expandedDone, setExpandedDone] = useState(false);
   const [content, setContent] = useState<string | undefined>(item.content);
   const [loading, setLoading] = useState(false);
   const [pinned, setPinned] = useState(item.pinned);
@@ -166,6 +167,7 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
 
   const loadFull = useCallback(async () => {
     if (content !== undefined) {
+      setExpandedDone(false);
       setOpen(true);
       return;
     }
@@ -173,6 +175,7 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
     try {
       const data = await api.get<{ content: string }>(`/api/articles/${item.id}`);
       setContent(data.content);
+      setExpandedDone(false);
       setOpen(true);
       // Scroll to the article's top anchor after content loads
       setTimeout(() => {
@@ -195,6 +198,7 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
     }
     // Reuse a previously fetched translation without another round-trip.
     if (translatedContent !== undefined) {
+      setExpandedDone(false);
       setTranslated(true);
       setOpen(true);
       return;
@@ -213,6 +217,7 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
       }
       setTranslatedTitle(data.title);
       setTranslatedContent(data.content);
+      setExpandedDone(false);
       setTranslated(true);
       setOpen(true);
     } catch (err) {
@@ -321,7 +326,8 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
       {bodyHtml !== undefined && (
         <div
           ref={articleBodyRef}
-          className={`article-body article-rendered overflow-hidden text-lg text-fg/90${open ? " animate-expand" : ""}`}
+          className={`article-body article-rendered text-lg text-fg/90${open && !expandedDone ? " animate-expand overflow-hidden" : ""}`}
+          onAnimationEnd={() => setExpandedDone(true)}
           dangerouslySetInnerHTML={{ __html: bodyHtml }}
         />
       )}
