@@ -43,7 +43,7 @@ const ALLOWED_EXTS = new Set<string>([
 ]);
 
 export const POST = handler(async (req: Request) => {
-  requireAdmin();
+  await requireAdmin();
 
   const form = await req.formData();
   const file = form.get("file");

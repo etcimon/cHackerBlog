@@ -16,7 +16,20 @@ export const GET = handler<Ctx>(async (_req, { params }) => {
   const { slug } = await params;
   const admin = await isAdmin();
   const article = await getLegalArticle(slug, { includeUnpublished: admin });
-  if (!article) throw Errors.notFound("Legal article not found");
+  if (!article) {
+    // For admins, return an empty shell so the editor can pre-fill;
+    // for public, return 404.
+    if (admin) {
+      return ok({
+        id: "",
+        slug,
+        title: slug === "terms-conditions" ? "Terms & Conditions" : "Privacy Policy",
+        content: "",
+        published: false,
+      });
+    }
+    throw Errors.notFound("Legal article not found");
+  }
   return ok(article);
 });
 
@@ -27,7 +40,7 @@ const legalInputSchema = z.object({
 });
 
 export const PUT = handler<Ctx>(async (req, { params }) => {
-  requireAdmin();
+  await requireAdmin();
   const { slug } = await params;
   const json = await req.json().catch(() => ({}));
   const input = legalInputSchema.parse(json);

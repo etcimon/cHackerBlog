@@ -7,6 +7,7 @@ import { handler, ok, Errors } from "@/lib/errors";
 import { feedQuerySchema } from "@/lib/schemas";
 import { getFeed } from "@/lib/articles";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
+import { isAdmin } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -16,12 +17,13 @@ export const GET = handler(async (req: Request) => {
   if (!rl.allowed) throw Errors.rateLimited();
 
   const url = new URL(req.url);
+  const admin = await isAdmin();
   const query = feedQuerySchema.parse({
     cursor: url.searchParams.get("cursor") ?? undefined,
     tag: url.searchParams.get("tag") ?? undefined,
     locale: url.searchParams.get("locale") ?? undefined,
     take: url.searchParams.get("take") ?? undefined,
-    includeUnpublished: url.searchParams.get("includeUnpublished") === "true",
+    includeUnpublished: admin && url.searchParams.get("includeUnpublished") === "true",
   });
 
   const page = await getFeed(query);

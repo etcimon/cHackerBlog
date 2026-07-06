@@ -53,6 +53,7 @@ export function Footer({
   const [submitting, setSubmitting] = useState(false);
   const [readingArticle, setReadingArticle] = useState<LegalArticle | null>(null);
   const [loadingRead, setLoadingRead] = useState(false);
+  const [showTopRight, setShowTopRight] = useState(false);
 
   // Fetch legal status on mount and when admin status changes
   const refreshStatus = useCallback(async () => {
@@ -67,6 +68,24 @@ export function Footer({
   useEffect(() => {
     void refreshStatus();
   }, [refreshStatus, isAdmin]);
+
+  // Show the top-right controls only when more than 1 article is on the page
+  useEffect(() => {
+    const check = () => {
+      const count = document.querySelectorAll('[data-testid="article-card"]').length;
+      setShowTopRight(count > 1);
+    };
+    check();
+    // Re-check after a short delay for client-rendered content
+    const timer = setTimeout(check, 2000);
+    // Also observe DOM additions so we catch article cards whenever they appear
+    const observer = new MutationObserver(() => check());
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => {
+      clearTimeout(timer);
+      observer.disconnect();
+    };
+  }, []);
 
   // Open admin editor for a legal slug
   const openEditor = useCallback(
@@ -139,8 +158,11 @@ export function Footer({
 
   return (
     <>
-      {/* Faint legal links at the top-right */}
-      <div className="fixed right-3 top-3 z-30 flex items-center gap-2 text-[10px] text-muted/40">
+      {/* Top-right controls: language switcher + legal links + github */}
+      {showTopRight && (
+      <div className="absolute right-3 top-3 z-30 flex items-center gap-2 text-[10px] text-muted/40">
+        <LanguageSwitcher />
+        <span className="text-muted/30">·</span>
         {links.map(({ slug, label, isReady }, idx) => {
           // Admin: always show and always open the editor
           if (isAdmin) {
@@ -173,11 +195,52 @@ export function Footer({
           }
           return null;
         })}
+        <span className="text-muted/30">·</span>
+        <a
+          href="https://github.com/etcimon/chackerblog"
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center transition-colors hover:text-muted"
+          title="cHackerBlog"
+        >
+          <Github className="h-3 w-3" />
+        </a>
       </div>
+      )}
 
       <footer className="mt-16 border-t border-border py-8 text-center text-sm text-muted">
         <div className="mb-3 flex items-center justify-center gap-4">
           <LanguageSwitcher />
+          <span className="text-muted/30">·</span>
+          {links.map(({ slug, label, isReady }, idx) => {
+            if (isAdmin) {
+              return (
+                <span key={slug} className="flex items-center gap-2">
+                  {idx > 0 && <span className="text-muted/30">·</span>}
+                  <button
+                    onClick={() => openEditor(slug)}
+                    className="transition-colors hover:text-accent"
+                  >
+                    {label}
+                  </button>
+                </span>
+              );
+            }
+            if (isReady) {
+              return (
+                <span key={slug} className="flex items-center gap-2">
+                  {idx > 0 && <span className="text-muted/30">·</span>}
+                  <button
+                    onClick={() => openReader(slug)}
+                    className="transition-colors hover:text-accent"
+                  >
+                    {label}
+                  </button>
+                </span>
+              );
+            }
+            return null;
+          })}
           {xHandle && (
             <a
               href={`https://x.com/${xHandle.replace(/^@/, "")}`}
@@ -200,7 +263,7 @@ export function Footer({
           )}
         </div>
         <p className="flex items-center justify-center gap-1.5">
-          Powered by{" "}
+          {t("common.poweredBy")}{" "}
           <a
             href="https://github.com/etcimon/chackerblog"
             target="_blank"
@@ -231,7 +294,7 @@ export function Footer({
               </button>
             </div>
             <div className="mb-4">
-              <label className="mb-1 block text-sm text-muted">Title</label>
+              <label className="mb-1 block text-sm text-muted">{t("legal.title")}</label>
               <input
                 type="text"
                 value={editTitle}
@@ -240,7 +303,7 @@ export function Footer({
               />
             </div>
             <div className="mb-4">
-              <label className="mb-1 block text-sm text-muted">Content</label>
+              <label className="mb-1 block text-sm text-muted">{t("legal.content")}</label>
               <Wysiwyg value={editContent} onChange={setEditContent} />
             </div>
             <div className="mb-4 flex items-center gap-2">
@@ -265,7 +328,7 @@ export function Footer({
                 disabled={submitting}
                 className="rounded-md border border-accent bg-accent px-4 py-2 text-sm font-semibold text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
               >
-                {submitting ? "…" : t("legal.save")}
+                {submitting ? t("legal.saving") : t("legal.save")}
               </button>
             </div>
           </div>
@@ -303,14 +366,14 @@ export function Footer({
               </button>
             </div>
             {loadingRead ? (
-              <p className="py-10 text-center text-muted">Loading…</p>
+              <p className="py-10 text-center text-muted">{t("legal.loading")}</p>
             ) : readingArticle ? (
               <div
                 className="article-body article-rendered text-lg text-fg/90"
                 dangerouslySetInnerHTML={{ __html: readingArticle.content }}
               />
             ) : (
-              <p className="py-10 text-center text-muted">No content available.</p>
+              <p className="py-10 text-center text-muted">{t("legal.noContent")}</p>
             )}
           </div>
         </div>

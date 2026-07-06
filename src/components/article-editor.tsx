@@ -13,6 +13,7 @@ import { articleInputSchema, type ArticleInput } from "@/lib/schemas";
 import type { FeedItem, TagItem } from "@/lib/types";
 import { api, ApiClientError } from "@/lib/api-client";
 import { useToast } from "@/components/toast";
+import { useI18n } from "@/lib/use-i18n";
 import { Wysiwyg } from "@/components/wysiwyg";
 
 interface Props {
@@ -24,6 +25,7 @@ interface Props {
 
 export function ArticleEditor({ article, allTags, onClose, onSaved }: Props) {
   const toast = useToast();
+  const { t } = useI18n();
   const isEdit = Boolean(article);
   const [content, setContent] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -57,9 +59,8 @@ export function ArticleEditor({ article, allTags, onClose, onSaved }: Props) {
   useEffect(() => {
     if (!articleId) return;
     let cancelled = false;
-    // Always pass admin=true for edit modal since it's only accessible to admins
     api
-      .get<{ content: string }>(`/api/articles/${articleId}?admin=true`)
+      .get<{ content: string }>(`/api/articles/${articleId}`)
       .then((d) => {
         if (cancelled) return;
         setContent(d.content);
@@ -68,7 +69,7 @@ export function ArticleEditor({ article, allTags, onClose, onSaved }: Props) {
       .catch((err) => {
         if (cancelled) return;
         console.error("Failed to load article:", err);
-        toast.error(err instanceof ApiClientError ? err.message : "Failed to load article");
+        toast.error(err instanceof ApiClientError ? err.message : t("article.failedLoad"));
       });
     return () => {
       cancelled = true;
@@ -106,20 +107,20 @@ export function ArticleEditor({ article, allTags, onClose, onSaved }: Props) {
       if (isEdit && article) {
         const result = await api.put<{ deleted?: boolean }>(`/api/articles/${article.id}`, values);
         if (result.deleted) {
-          toast.success("Article deleted (empty content)");
+          toast.success(t("article.articleDeleted"));
           reset();
           onSaved();
           return;
         }
-        toast.success("Article updated");
+        toast.success(t("article.articleUpdated"));
       } else {
         await api.post("/api/articles", values);
-        toast.success("Article published");
+        toast.success(t("article.articlePublished"));
       }
       reset();
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiClientError ? err.message : "Save failed");
+      toast.error(err instanceof ApiClientError ? err.message : t("article.saveFailed"));
     } finally {
       setSubmitting(false);
     }
@@ -130,7 +131,7 @@ export function ArticleEditor({ article, allTags, onClose, onSaved }: Props) {
       <div className="my-8 w-full max-w-3xl rounded-lg border border-border bg-card p-6 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="font-heading text-xl font-bold text-fg">
-            {isEdit ? "Edit article" : "New article"}
+            {isEdit ? t("article.editArticle") : t("article.newArticle")}
           </h3>
           <button onClick={onClose} className="text-muted hover:text-fg">
             <X className="h-5 w-5" />
@@ -141,7 +142,7 @@ export function ArticleEditor({ article, allTags, onClose, onSaved }: Props) {
           <div>
             <input
               {...register("title")}
-              placeholder="Title"
+              placeholder={t("article.titlePlaceholder")}
               className="w-full rounded border border-border bg-bg px-3 py-2 text-lg text-fg outline-none focus:border-accent"
             />
             {errors.title && (
@@ -152,12 +153,12 @@ export function ArticleEditor({ article, allTags, onClose, onSaved }: Props) {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <input
               {...register("coverUrl")}
-              placeholder="Cover image URL (optional)"
+              placeholder={t("article.coverUrlPlaceholder")}
               className="w-full rounded border border-border bg-bg px-3 py-2 text-sm text-fg outline-none focus:border-accent"
             />
             <input
               {...register("locale")}
-              placeholder="Locale (e.g. en, fr)"
+              placeholder={t("article.localePlaceholder")}
               className="w-full rounded border border-border bg-bg px-3 py-2 text-sm text-fg outline-none focus:border-accent"
             />
           </div>
@@ -196,7 +197,7 @@ export function ArticleEditor({ article, allTags, onClose, onSaved }: Props) {
               className="flex items-center gap-1 rounded-full border border-dashed border-border px-3 py-1 text-xs text-muted hover:text-fg"
             >
               <Plus className="h-3 w-3" />
-              tag
+              {t("article.addTag")}
             </button>
           </div>
 
@@ -207,7 +208,7 @@ export function ArticleEditor({ article, allTags, onClose, onSaved }: Props) {
 
           <label className="flex items-center gap-2 text-sm text-muted">
             <input type="checkbox" {...register("published")} className="accent-accent" />
-            Published (triggers social auto-post if enabled)
+            {t("article.publishedLabel")}
           </label>
 
           <div className="flex justify-end gap-3">
@@ -216,14 +217,14 @@ export function ArticleEditor({ article, allTags, onClose, onSaved }: Props) {
               onClick={onClose}
               className="rounded border border-border px-4 py-2 text-sm text-muted hover:text-fg"
             >
-              Cancel
+              {t("common.cancel")}
             </button>
             <button
               type="submit"
               disabled={submitting}
               className="rounded bg-accent px-5 py-2 text-sm font-semibold text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
             >
-              {submitting ? "Saving…" : isEdit ? "Update" : "Publish"}
+              {submitting ? t("common.saving") : isEdit ? t("article.update") : t("article.publish")}
             </button>
           </div>
         </form>
@@ -232,12 +233,12 @@ export function ArticleEditor({ article, allTags, onClose, onSaved }: Props) {
       {showAddTagModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
           <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-2xl">
-            <h3 className="mb-4 font-heading text-lg font-bold text-fg">Add new tag</h3>
+            <h3 className="mb-4 font-heading text-lg font-bold text-fg">{t("article.addNewTag")}</h3>
             <input
               type="text"
               value={newTagName}
               onChange={(e) => setNewTagName(e.target.value)}
-              placeholder="Tag name"
+              placeholder={t("article.tagNamePlaceholder")}
               className="w-full rounded border border-border bg-bg px-3 py-2 text-fg outline-none focus:border-accent"
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
@@ -255,14 +256,14 @@ export function ArticleEditor({ article, allTags, onClose, onSaved }: Props) {
                 }}
                 className="rounded border border-border px-4 py-2 text-sm text-muted hover:text-fg"
               >
-                Cancel
+                {t("common.cancel")}
               </button>
               <button
                 type="button"
                 onClick={addNewTag}
                 className="rounded bg-accent px-4 py-2 text-sm font-semibold text-bg transition-opacity hover:opacity-90"
               >
-                Add
+                {t("article.add")}
               </button>
             </div>
           </div>

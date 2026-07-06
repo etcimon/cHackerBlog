@@ -11,7 +11,7 @@ import { invalidate } from "@/lib/cache";
 export const runtime = "nodejs";
 
 export const POST = handler(async (req: Request, { params }: { params: Promise<{ id: string }> }) => {
-  requireAdmin();
+  await requireAdmin();
   const { id } = await params;
   const article = await prisma.article.findUnique({
     where: { id },
@@ -31,7 +31,7 @@ export const POST = handler(async (req: Request, { params }: { params: Promise<{
 });
 
 export const DELETE = handler(async (req: Request, { params }: { params: Promise<{ id: string }> }) => {
-  requireAdmin();
+  await requireAdmin();
   const { id } = await params;
   const article = await prisma.article.findUnique({
     where: { id },

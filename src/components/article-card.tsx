@@ -133,15 +133,15 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
       if (pinned) {
         await api.unpinArticle<{ pinned: boolean; pinnedAt: string | null }>(item.id);
         setPinned(false);
-        toast.success("Article unpinned");
+        toast.success(t("article.articleUnpinned"));
       } else {
         await api.pinArticle<{ pinned: boolean; pinnedAt: string | null }>(item.id);
         setPinned(true);
-        toast.success("Article pinned");
+        toast.success(t("article.articlePinned"));
       }
       window.location.reload();
     } catch (err) {
-      toast.error(err instanceof ApiClientError ? err.message : "Failed to update pin status");
+      toast.error(err instanceof ApiClientError ? err.message : t("article.failedPin"));
     } finally {
       setPinning(false);
     }
@@ -152,10 +152,10 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
     try {
       await api.put(`/api/articles/${item.id}`, { published: true });
       setPublished(true);
-      toast.success("Article published");
+      toast.success(t("article.articlePublished"));
       window.location.reload();
     } catch (err) {
-      toast.error(err instanceof ApiClientError ? err.message : "Failed to publish article");
+      toast.error(err instanceof ApiClientError ? err.message : t("article.failedPublish"));
     } finally {
       setPublishing(false);
     }
@@ -168,8 +168,7 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
     }
     setLoading(true);
     try {
-      const url = isAdmin ? `/api/articles/${item.id}?admin=true` : `/api/articles/${item.id}`;
-      const data = await api.get<{ content: string }>(url);
+      const data = await api.get<{ content: string }>(`/api/articles/${item.id}`);
       setContent(data.content);
       setOpen(true);
       // Scroll to the article's top anchor after content loads
@@ -180,7 +179,7 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
         }
       }, 100);
     } catch (err) {
-      toast.error(err instanceof ApiClientError ? err.message : "Failed to load article");
+      toast.error(err instanceof ApiClientError ? err.message : t("article.failedLoad"));
     } finally {
       setLoading(false);
     }
@@ -251,7 +250,7 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
             {pinned && (
               <div className="inline-flex items-center gap-1.5 rounded-md border border-accent bg-accent/10 px-3 py-1.5 text-xs text-accent">
                 <Pin className="h-3.5 w-3.5" />
-                <span className="font-semibold">Pinned</span>
+                <span className="font-semibold">{t("article.pinned")}</span>
               </div>
             )}
             {!published && isAdmin && (
@@ -262,7 +261,7 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
                 title="Click to publish article"
               >
                 <EyeOff className="h-3.5 w-3.5" />
-                <span className="font-semibold">Unpublished</span>
+                <span className="font-semibold">{t("article.unpublished")}</span>
               </button>
             )}
             {isAdmin && (
@@ -332,17 +331,17 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
             className="inline-flex items-center gap-1.5 rounded-md border border-accent px-4 py-2 text-sm font-semibold text-accent transition-colors hover:bg-accent hover:text-bg disabled:opacity-50"
           >
             <ChevronDown className="h-4 w-4" />
-            {loading ? "Loading…" : "Full text"}
+            {loading ? t("article.loading") : t("article.fullText")}
           </button>
         )}
         {isAdmin && onEdit && (
           <button
             onClick={() => onEdit(item)}
-            title="Edit article"
+            title={t("article.editArticle")}
             className="inline-flex items-center gap-1.5 rounded-md border border-border px-4 py-2 text-sm text-muted transition-colors hover:text-fg"
           >
             <Pencil className="h-4 w-4" />
-            Edit
+            {t("article.edit")}
           </button>
         )}
       </div>

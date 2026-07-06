@@ -17,6 +17,70 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function waitForEmbeds(page: Page, timeout = 15000): Promise<void> {
+  const embedCount = await page.evaluate(() => {
+    return document.querySelectorAll('[data-embed="1"]').length;
+  });
+  if (embedCount === 0) return;
+  console.log(`Found ${embedCount} embed(s), waiting for them to load...`);
+
+  // Remove loading="lazy" from all iframes so they start fetching immediately
+  await page.evaluate(() => {
+    document.querySelectorAll('iframe[loading="lazy"]').forEach((el) => {
+      el.removeAttribute('loading');
+    });
+  });
+
+  // Scroll through the page in steps to trigger lazy-loaded content and iframes
+  const totalHeight = await page.evaluate(() => document.body.scrollHeight);
+  const step = 800;
+  for (let y = 0; y < totalHeight; y += step) {
+    await page.evaluate((offset) => window.scrollTo(0, offset), y);
+    await sleep(300);
+  }
+  // Scroll back to top for the screenshot
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await sleep(500);
+
+  // Use CDP to wait for all frames to finish loading (cross-origin iframes
+  // don't fire load events in the page context, so page.evaluate is unreliable)
+  const client = await page.target().createCDPSession();
+  const frameIds = new Set<string>();
+  let loadedCount = 0;
+
+  // Collect all child frame IDs via CDP frame tree
+  const { frameTree } = await client.send('Page.getFrameTree');
+  const mainFrameId = frameTree.frame.id;
+  const collectFrameIds = (node: any) => {
+    if (node.frame && node.frame.id !== mainFrameId) {
+      frameIds.add(node.frame.id);
+    }
+    (node.childFrames || []).forEach(collectFrameIds);
+  };
+  collectFrameIds(frameTree);
+
+  const allLoaded = new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, timeout);
+    if (frameIds.size === 0) { clearTimeout(timer); resolve(); return; }
+    client.on('Page.frameStoppedLoading', ({ frameId }: { frameId: string }) => {
+      if (frameIds.has(frameId)) {
+        loadedCount++;
+        if (loadedCount >= frameIds.size) {
+          clearTimeout(timer);
+          resolve();
+        }
+      }
+    });
+  });
+
+  await allLoaded;
+  console.log(`Embed frames loaded (${loadedCount}/${frameIds.size})`);
+
+  // Give embeds a moment to render their content after load
+  await sleep(2000);
+  console.log('Embeds ready');
+}
+
 async function takeScreenshots() {
   const browser = await puppeteer.launch({
     headless: true,
@@ -32,21 +96,39 @@ async function takeScreenshots() {
 
   try {
     console.log("Navigating to home page...");
-    await page.goto(`${baseUrl}`, { waitUntil: "networkidle0", timeout: 30000 });
+    await page.goto(`${baseUrl}`, { waitUntil: "domcontentloaded", timeout: 30000 });
 
-    // Wait for content to load
-    await page.waitForSelector("body", { timeout: 10000 });
+    // Wait for article cards to render (feed loads client-side via API)
+    console.log("Waiting for articles to load...");
+    try {
+      await page.waitForSelector('[data-testid="article-card"]', { timeout: 15000 });
+      console.log("Articles detected");
+    } catch {
+      console.log("No articles found within timeout - taking screenshot anyway");
+    }
 
-    // Take screenshot of home page
+    // Wait for embedded elements (YouTube, SoundCloud, etc.) to load
+    await waitForEmbeds(page);
+
+    // Wait for the top-right language switcher to appear (gated behind
+    // showTopRight which requires >1 article card in the DOM)
+    console.log("Waiting for language switcher to appear...");
+    try {
+      await page.waitForSelector("select", { timeout: 10000 });
+      console.log("Language switcher detected");
+    } catch {
+      console.log("Language switcher not found within timeout");
+    }
+
+    // Take screenshot of home page (viewport only, not full page)
     console.log("Taking screenshot of home page...");
     await page.screenshot({
       path: path.join(SCREENSHOT_DIR, "blog-home.png"),
-      fullPage: true,
+      fullPage: false,
     });
 
     // Login as admin
     console.log("Logging in as admin...");
-    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle0", timeout: 10000 });
     await sleep(2000);
 
     // Click admin button to open login modal
@@ -86,7 +168,11 @@ async function takeScreenshots() {
         });
         if (unlockButtonClicked) {
           console.log("Unlock button clicked");
-          await sleep(3000);
+          // Wait for the page to reload after login (admin-bar calls window.location.reload)
+          await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {
+            console.log("Navigation event not detected, continuing...");
+          });
+          await sleep(1000);
         } else {
           console.log("Unlock button not found");
         }
@@ -101,10 +187,9 @@ async function takeScreenshots() {
       });
     }
 
-    // Wait for page to reload after login
-    console.log("Waiting for page to reload after login...");
-    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle0", timeout: 10000 });
-    await sleep(3000);
+    // No need to re-navigate — the login flow already reloaded the page
+    console.log("Page reloaded after login, checking state...");
+    await sleep(2000);
 
     // Check if we're still seeing the Admin button (not logged in) or admin toolbar (logged in)
     const adminButtonAfterLogin = await page.$('button[title="Admin"]');
@@ -127,39 +212,32 @@ async function takeScreenshots() {
       console.log("Admin toolbar not detected within timeout, continuing anyway");
     }
 
-    // Look for edit button on articles first
-    console.log("Looking for edit button on articles...");
-    let editButton = await page.$('button[title="Edit article"]');
-    if (editButton) {
-      console.log("Found edit button, clicking...");
-      await editButton.click();
-      await sleep(1000);
-
-      // Take screenshot of edit modal
-      console.log("Taking screenshot of edit modal...");
+    // Wait for articles to reload after login
+    console.log("Waiting for articles to reload after login...");
+    try {
+      await page.waitForSelector('[data-testid="article-card"]', { timeout: 15000 });
+      console.log("Articles detected after login");
+    } catch {
+      console.log("No articles found after login - taking debug screenshot");
       await page.screenshot({
-        path: path.join(SCREENSHOT_DIR, "edit-modal.png"),
-        fullPage: false,
+        path: path.join(SCREENSHOT_DIR, "debug-after-login.png"),
+        fullPage: true,
       });
-    } else {
-      console.log("No edit button found - trying New Article button instead...");
-      // Try clicking the "New Article" button from AdminBar
-      let newArticleButton = await page.$('button[title="New article"]');
-      if (!newArticleButton) {
-        // Fallback: look for button containing "New article" text
-        const newArticleExists = await page.evaluate(() => {
-          const buttons = Array.from(document.querySelectorAll('button'));
-          return buttons.find(btn => btn.textContent?.includes('New article'));
-        });
-        if (newArticleExists) {
-          newArticleButton = await page.$('button[title="New article"]');
-        }
-      }
-      
-      if (newArticleButton) {
-        console.log("Found New Article button, clicking...");
-        await newArticleButton.click();
-        await sleep(1000);
+    }
+
+    // Scroll to the first article and click its edit button
+    console.log("Scrolling to first article...");
+    const firstArticle = await page.$('[data-testid="article-card"]');
+    if (firstArticle) {
+      await firstArticle.evaluate((el) => el.scrollIntoView({ block: "start" }));
+      await sleep(500);
+
+      // Find the edit button within the first article
+      const editButton = await firstArticle.$('button[title="Edit article"]');
+      if (editButton) {
+        console.log("Found edit button on first article, clicking...");
+        await editButton.click();
+        await sleep(1500);
 
         // Take screenshot of edit modal
         console.log("Taking screenshot of edit modal...");
@@ -168,13 +246,30 @@ async function takeScreenshots() {
           fullPage: false,
         });
       } else {
-        console.log("New Article button not found - taking debug screenshot");
-        // Debug: take a screenshot of what we see
-        await page.screenshot({
-          path: path.join(SCREENSHOT_DIR, "debug-after-login.png"),
-          fullPage: true,
-        });
+        console.log("Edit button not found on first article - trying New Article button...");
+        let newArticleButton = await page.$('button[title="New article"]');
+        if (newArticleButton) {
+          await newArticleButton.click();
+          await sleep(1500);
+          console.log("Taking screenshot of edit modal...");
+          await page.screenshot({
+            path: path.join(SCREENSHOT_DIR, "edit-modal.png"),
+            fullPage: false,
+          });
+        } else {
+          console.log("New Article button not found - taking debug screenshot");
+          await page.screenshot({
+            path: path.join(SCREENSHOT_DIR, "debug-after-login.png"),
+            fullPage: true,
+          });
+        }
       }
+    } else {
+      console.log("No article card found - taking debug screenshot");
+      await page.screenshot({
+        path: path.join(SCREENSHOT_DIR, "debug-after-login.png"),
+        fullPage: true,
+      });
     }
 
     console.log("Screenshots saved to:", SCREENSHOT_DIR);

@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { X, Link as LinkIcon, Check, Share2, Mail } from "lucide-react";
 import { useToast } from "@/components/toast";
+import { useI18n } from "@/lib/use-i18n";
 import {
   buildShareTargets,
   toNativeShareData,
@@ -79,6 +80,7 @@ function BrandIcon({ id }: { id: NetworkId }) {
 
 export function ShareModal({ open, onClose, payload, thumbnailUrl }: Props) {
   const toast = useToast();
+  const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   const [canNativeShare, setCanNativeShare] = useState(false);
 
@@ -122,10 +124,10 @@ export function ShareModal({ open, onClose, payload, thumbnailUrl }: Props) {
     try {
       await navigator.clipboard.writeText(payload.url);
       setCopied(true);
-      toast.success("Article link copied");
+      toast.success(t("share.linkCopied"));
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      toast.error("Could not copy link");
+      toast.error(t("share.copyFailed"));
     }
   }, [payload.url, toast]);
 
@@ -148,7 +150,7 @@ export function ShareModal({ open, onClose, payload, thumbnailUrl }: Props) {
       onClick={onClose}
       role="dialog"
       aria-modal="true"
-      aria-label="Share this article"
+      aria-label={t("share.title")}
     >
       <div
         className="share-modal w-full max-w-md rounded-t-2xl border border-border bg-card p-5 shadow-2xl sm:rounded-2xl"
@@ -157,12 +159,12 @@ export function ShareModal({ open, onClose, payload, thumbnailUrl }: Props) {
         <div className="mb-4 flex items-center justify-between">
           <h3 className="flex items-center gap-2 font-heading text-lg font-bold text-fg">
             <Share2 className="h-5 w-5 text-accent" />
-            Share
+            {t("share.title")}
           </h3>
           <button
             onClick={onClose}
             className="rounded-md p-1 text-muted transition-colors hover:text-fg"
-            aria-label="Close"
+            aria-label={t("share.close")}
           >
             <X className="h-5 w-5" />
           </button>
@@ -193,7 +195,7 @@ export function ShareModal({ open, onClose, payload, thumbnailUrl }: Props) {
             className="share-native mb-3 flex w-full items-center justify-center gap-2 rounded-xl bg-accent py-2.5 text-sm font-semibold text-bg transition-transform hover:scale-[1.02] active:scale-95"
           >
             <Share2 className="h-4 w-4" />
-            Share via device…
+            {t("share.viaDevice")}
           </button>
         )}
 
@@ -217,12 +219,12 @@ export function ShareModal({ open, onClose, payload, thumbnailUrl }: Props) {
             onClick={copyLink}
             className="share-net group flex flex-col items-center gap-1.5 rounded-xl border border-border bg-bg/40 py-3 text-muted transition-all hover:-translate-y-0.5 hover:border-accent hover:text-fg"
             style={{ animationDelay: `${targets.length * 40}ms` }}
-            title="Copy link"
+            title={t("share.copy")}
           >
             <span className="share-net__icon text-accent">
               {copied ? <Check className="h-[22px] w-[22px]" /> : <LinkIcon className="h-[22px] w-[22px]" />}
             </span>
-            <span className="text-[11px] font-medium">{copied ? "Copied" : "Copy"}</span>
+            <span className="text-[11px] font-medium">{copied ? t("share.copied") : t("share.copy")}</span>
           </button>
         </div>
       </div>

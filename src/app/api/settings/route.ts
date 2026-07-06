@@ -44,7 +44,7 @@ export const GET = handler(async () => {
 });
 
 export const PUT = handler(async (req: Request) => {
-  requireAdmin();
+  await requireAdmin();
   const body = await req.json().catch(() => ({}));
   const input = siteSettingsSchema.parse(body);
   const updated = await updateSettings({ ...input, setupComplete: true });

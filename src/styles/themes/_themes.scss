@@ -47,6 +47,21 @@
     letter-spacing: 0.06em;
   }
 
+  // Feed loader: neon-glow terminal hacker vibe.
+  .feed-loader__cursor {
+    box-shadow: 0 0 6px rgb(var(--cb-accent) / 0.8);
+  }
+  .feed-loader__bar-fill {
+    box-shadow: 0 0 8px rgb(var(--cb-accent) / 0.6);
+  }
+  .feed-loader__dot {
+    box-shadow: 0 0 4px rgb(var(--cb-accent) / 0.5);
+  }
+  .feed-loader__terminal {
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
   // Feed next button: sharp, glowing terminal accent.
   .feed-next-btn {
     border-radius: 0.375rem;
@@ -61,6 +76,18 @@
 
 [data-theme="medium"] {
   @include tokens.emit(palettes.$medium);
+
+  // Feed loader: soft, editorial sans-serif feel.
+  .feed-loader {
+    font-family: var(--cb-font-body);
+  }
+  .feed-loader__bar {
+    height: 3px;
+    border-radius: 999px;
+  }
+  .feed-loader__bar-fill {
+    border-radius: 999px;
+  }
 
   // Editorial: roomier bar and softer, paper-like rounded code surface.
   .article-body {
@@ -95,6 +122,17 @@
 
 [data-theme="substack"] {
   @include tokens.emit(palettes.$substack);
+
+  // Feed loader: warm, paper-like serif feel.
+  .feed-loader {
+    font-family: var(--cb-font-body);
+  }
+  .feed-loader__bar {
+    height: 3px;
+  }
+  .feed-loader__bar-fill {
+    border-radius: 999px;
+  }
 
   // Inherits Medium's editorial code chrome with the warm Substack accent.
   .article-body {

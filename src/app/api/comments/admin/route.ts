@@ -11,7 +11,7 @@ export const runtime = "nodejs";
 
 // GET pending comments for admin moderation
 export const GET = handler(async (req: Request) => {
-  requireAdmin();
+  await requireAdmin();
 
   const url = new URL(req.url);
   const articleId = url.searchParams.get("articleId");
@@ -32,7 +32,7 @@ export const GET = handler(async (req: Request) => {
 
 // PATCH to approve/reject comment (admin only)
 export const PATCH = handler(async (req: Request) => {
-  requireAdmin();
+  await requireAdmin();
 
   const body = await req.json().catch(() => ({}));
   const { commentId, approved } = body;

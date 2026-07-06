@@ -9,6 +9,7 @@ import { MessageCircle, Share2, Link as LinkIcon, Lock } from "lucide-react";
 import { api, ApiClientError } from "@/lib/api-client";
 import { useToast } from "@/components/toast";
 import { ShareModal } from "@/components/share-modal";
+import { useI18n } from "@/lib/use-i18n";
 
 interface CommentItem {
   id: string;
@@ -48,10 +49,11 @@ export function CommentBar({
   const [submitting, setSubmitting] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const toast = useToast();
+  const { t } = useI18n();
 
   const toggle = useCallback(async () => {
     if (!commentsEnabled) {
-      toast.info("Comments are disabled");
+      toast.info(t("comments.disabled"));
       return;
     }
 
@@ -74,7 +76,7 @@ export function CommentBar({
   const submit = useCallback(async () => {
     if (!body.trim()) return;
     if (!ageConfirmed) {
-      toast.error("You must confirm you are 14+ years old");
+      toast.error(t("comments.ageConfirmError"));
       return;
     }
     setSubmitting(true);
@@ -87,9 +89,9 @@ export function CommentBar({
       });
       setBody("");
       setAgeConfirmed(false);
-      toast.success("Comment submitted for moderation");
+      toast.success(t("comments.submitted"));
     } catch (err) {
-      toast.error(err instanceof ApiClientError ? err.message : "Failed to comment");
+      toast.error(err instanceof ApiClientError ? err.message : t("comments.failed"));
     } finally {
       setSubmitting(false);
     }
@@ -108,28 +110,28 @@ export function CommentBar({
           onClick={toggle}
           className="flex items-center gap-1.5 transition-colors hover:text-accent disabled:opacity-50 disabled:cursor-not-allowed"
           disabled={!commentsEnabled}
-          title={commentsEnabled ? "Comment" : "Comments are disabled"}
+          title={commentsEnabled ? t("comments.comment") : t("comments.commentsDisabled")}
         >
           {commentsEnabled ? (
             <MessageCircle className="h-5 w-5" />
           ) : (
             <Lock className="h-5 w-5" />
           )}
-          <span className="text-sm">{commentsEnabled ? `Comment` + (commentCount > 0 ? `s [${commentCount}]` : ``) : "Comments disabled"}</span>
+          <span className="text-sm">{commentsEnabled ? `${t("comments.comment")}` + (commentCount > 0 ? ` [${commentCount}]` : ``) : t("comments.commentsDisabled")}</span>
         </button>
         <button
           onClick={() => setShareOpen(true)}
           className="flex items-center gap-1.5 transition-colors hover:text-accent"
         >
           <Share2 className="h-5 w-5" />
-          <span className="text-sm">Share</span>
+          <span className="text-sm">{t("share.title")}</span>
         </button>
         <a
           href={articleUrl}
           className="flex items-center gap-1.5 transition-colors hover:text-accent"
         >
           <LinkIcon className="h-5 w-5" />
-          <span className="text-sm">Reference</span>
+          <span className="text-sm">{t("common.back")}</span>
         </a>
       </div>
 
@@ -151,13 +153,13 @@ export function CommentBar({
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Name (optional)"
+              placeholder={t("comments.nameOptional")}
               className="w-full rounded border border-border bg-bg px-3 py-2 text-sm text-fg outline-none focus:border-accent"
             />
             <textarea
               value={body}
               onChange={(e) => setBody(e.target.value)}
-              placeholder="Leave a comment…"
+              placeholder={t("comments.leaveComment")}
               rows={3}
               className="w-full rounded border border-border bg-bg px-3 py-2 text-sm text-fg outline-none focus:border-accent"
             />
@@ -168,14 +170,14 @@ export function CommentBar({
                 onChange={(e) => setAgeConfirmed(e.target.checked)}
                 className="mt-0.5 h-4 w-4 rounded border-border bg-bg text-accent focus:ring-accent"
               />
-              <span>I confirm that I am 14 years of age or older</span>
+              <span>{t("comments.ageConfirm")}</span>
             </label>
             <button
               onClick={submit}
               disabled={submitting || !ageConfirmed}
               className="rounded bg-accent px-4 py-2 text-sm font-semibold text-bg transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {submitting ? "Submitting…" : "Submit"}
+              {submitting ? t("comments.submitting") : t("comments.submit")}
             </button>
           </div>
 
@@ -192,7 +194,7 @@ export function CommentBar({
               </li>
             ))}
             {loaded && comments.length === 0 && (
-              <li className="text-sm text-muted">No comments yet.</li>
+              <li className="text-sm text-muted">{t("comments.noComments")}</li>
             )}
           </ul>
         </div>

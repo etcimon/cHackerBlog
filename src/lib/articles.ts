@@ -118,7 +118,6 @@ export async function getFeed(query: FeedQuery): Promise<FeedPage> {
 
   // Bypass cache when including unpublished articles (admin mode)
   if (query.includeUnpublished) {
-    console.log("[getFeed] Fetching with includeUnpublished=true");
     const prisma = getPrisma();
     const rows = await prisma.article.findMany({
       where: {
@@ -141,7 +140,6 @@ export async function getFeed(query: FeedQuery): Promise<FeedPage> {
       },
     });
 
-    console.log(`[getFeed] Found ${rows.length} articles with includeUnpublished=true`);
     const hasMore = rows.length > take;
     const page = hasMore ? rows.slice(0, take) : rows;
     const isFirstPage = !query.cursor;
@@ -159,7 +157,6 @@ export async function getFeed(query: FeedQuery): Promise<FeedPage> {
   }
 
   return remember<FeedPage>("feed", cacheId, async () => {
-    console.log("[getFeed] Fetching with includeUnpublished=false (cached)");
     const prisma = getPrisma();
     const rows = await prisma.article.findMany({
       where: {

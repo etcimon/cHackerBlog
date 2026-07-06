@@ -14,7 +14,7 @@ import { truncateContent } from "@/lib/types";
 export const runtime = "nodejs";
 
 export const POST = handler(async (req: Request) => {
-  requireAdmin();
+  await requireAdmin();
   const body = await req.json().catch(() => ({}));
   const input = articleInputSchema.parse(body);
 

@@ -15,6 +15,7 @@ import { ArticleCard } from "@/components/article-card";
 import { TagBar } from "@/components/tag-bar";
 import { AdminBar } from "@/components/admin-bar";
 import { ArticleEditor } from "@/components/article-editor";
+import { FeedLoader } from "@/components/feed-loader";
 import { useAdmin } from "@/components/admin-context";
 
 interface Props {
@@ -267,11 +268,11 @@ export function Feed({
         ))}
       </div>
 
-      {loading && <p className="py-6 text-center text-muted">Loading…</p>}
+      {(loading || (items.length === 0 && !initialLoaded)) && <FeedLoader />}
       {!cursor && items.length > 0 && (
         <p className="py-6 text-center text-muted">— end of feed —</p>
       )}
-      {items.length === 0 && !loading && (
+      {items.length === 0 && !loading && initialLoaded && (
         <p className="py-10 text-center text-muted">No articles yet.</p>
       )}
 
