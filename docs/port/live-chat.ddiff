@@ -1,0 +1,1199 @@
+# live-chat.ddiff
+#
+# Doc-diff reference for the CallTorch Live Chat subsystem.
+#
+# PURPOSE
+# -------
+# This file is a portable, heavily-annotated reference of the *bulk* of the code
+# that implements live chat in this Next.js 16 (App Router) project. It is NOT a
+# runnable file. Each block reproduces the real implementation and prefixes every
+# meaningful construct with an intent comment (`# intent:`) so that a prompt in a
+# *different* Next.js project can reconstruct the same feature without re-reading
+# the whole repository.
+#
+# ARCHITECTURE AT A GLANCE
+# ------------------------
+# Visitor browser (components/LiveChat.tsx)
+#   -- POST /api/chat/send  --> creates ChatSession + Telegram forum topic, relays msg
+#        * application/json  body  --> a text message
+#        * multipart/form-data body --> a text/caption PLUS one file attachment
+#   -- POST /api/chat/close --> marks ChatSession closed, broadcasts status, deletes files
+#   -- GET  /api/chat/stream (SSE) <-- history + live message/status events
+#   -- GET  /api/chat/attachments/[id]?visitorId=... <-- authenticated attachment bytes
+#        (inline render for image/video/audio; forced download for documents / ?download=1)
+# Telegram support group (forum topics = 1 topic per session)
+#   -- POST /api/chat/telegram (webhook) --> agent replies / media / /close / topic-closed
+#        agent-sent photos/videos/docs/audio are downloaded and relayed to the visitor
+# Transport glue:
+#   lib/chat/pubsub.ts   -- Redis pub/sub with in-memory fallback (cross-worker fanout)
+#   lib/chat/telegram.ts -- Bot API wrappers (incl. media send/getFile/download) + webhook reg
+#   lib/chat/storage.ts  -- per-session on-disk attachment store (save/read/delete + guards)
+#   lib/chat/db.ts       -- Prisma helpers + DTO mappers
+#   lib/chat/types.ts    -- shared DTO / Telegram / event types (incl. attachment shapes)
+#   instrumentation.ts   -- registers webhook on Node.js server startup
+#
+# RICH ATTACHMENTS (default, bidirectional) -- see sections 1,2,5,7,8,9,12,13
+# ---------------------------------------------------------------------------
+# intent: attachments are a FIRST-CLASS, on-by-default capability of this
+# subsystem, not an add-on. Both directions are supported:
+#   visitor -> support : multipart upload -> stored on disk -> relayed to Telegram
+#   support -> visitor : Telegram media   -> downloaded -> stored on disk -> streamed
+# The SSE fanout stays content-agnostic: it carries only attachment METADATA
+# (type/name/mime/size) inside the ChatMessageDto; the raw bytes are always
+# fetched separately through the authenticated GET /api/chat/attachments/[id]
+# route (mirrors Telegram's own file_id -> getFile -> download indirection).
+# Files live under a per-conversation folder keyed on the STABLE ChatSession.id
+# (never the rotating visitorId) and are deleted on every close path + a cron
+# sweep, so no orphaned bytes survive a finished conversation. A single flag
+# NEXT_PUBLIC_LIVE_CHAT_ATTACHMENTS_ENABLED gates uploads, and it is re-checked
+# server-side (not merely used to hide the picker) so disabling it is real.
+#
+# DATA MODEL (prisma/schema.prisma, paraphrased)
+# ----------------------------------------------
+#   model ChatSession {
+#     id               String @id @default(cuid())
+#     visitorId        String @unique   # opaque client token (shared secret)
+#     name/email/ip/countryCode/pageUrl/userAgent  String?
+#     userId           String?          # set when an authenticated user chats
+#     telegramChatId   String?          # support supergroup id
+#     telegramThreadId Int?             # forum topic id (1:1 with a session)
+#     status           String @default("open")   # "open" | "closed"
+#     createdAt/updatedAt DateTime
+#     messages         ChatMessage[]
+#   }
+#   model ChatMessage {
+#     id                String @id @default(cuid())
+#     chatSessionId     String
+#     direction         ChatMessageDirection   # enum: visitor | support
+#     text              String @default("")    # "" for attachment-only messages
+#     telegramMessageId Int?    # used to resolve webhook replies back to a session
+#     errorText         String? # surfaced in UI when Telegram delivery failed
+#     # --- attachment columns (all nullable; null => plain text message) --------
+#     attachmentType    String? # "image" | "video" | "audio" | "voice" | "document"
+#     attachmentName    String? # original / derived filename shown in the UI
+#     attachmentMime    String? # content-type used when serving + rendering
+#     attachmentSize    Int?    # byte length (for the size label)
+#     attachmentPath    String? # storage-root-relative path "<sessionId>/<uuid.ext>"
+#     createdAt         DateTime
+#   }
+#   # intent: attachment metadata lives ON the message row (1 attachment per
+#   # message) rather than a side table — a message is either plain text OR a
+#   # single file with an optional caption. attachmentPath is a RELATIVE path so
+#   # the storage root can move between environments without a data migration.
+#
+# ENV VARS
+# --------
+#   TELEGRAM_BOT_TOKEN, TELEGRAM_SUPPORT_CHAT_ID  (supergroup with topics enabled)
+#   TELEGRAM_WEBHOOK_URL, TELEGRAM_WEBHOOK_SECRET  (public https + shared secret)
+#   REDIS_URL (optional; falls back to in-memory bus + DB polling)
+#   NEXT_PUBLIC_LIVE_CHAT_ENABLED ("false" hides widget), NEXT_PUBLIC_LIVE_CHAT_GREETING
+#   NEXT_PUBLIC_LIVE_CHAT_ATTACHMENTS_ENABLED ("false" disables uploads; DEFAULT on)
+#     intent: public flag so the client can hide the picker, but ALSO read on the
+#     server (same predicate) so a forged client cannot bypass a disabled state.
+#   CHAT_UPLOAD_DIR   (dir for attachment folders relative to cwd; default "chat-uploads")
+#   CHAT_MAX_UPLOAD_MB (max single-upload size in MB; default 20)
+#
+# =============================================================================
+# 1. components/LiveChat.tsx  --  client widget
+# =============================================================================
+"use client";
+# intent: this is a client component; it owns all UI state and the EventSource.
+
+# intent: NO persistence keys. Visitor identity and open-state live only in
+# component memory. A full window refresh discards them, which is the deliberate
+# lifecycle: reloading the page starts a fresh conversation. (This replaced an
+# earlier sessionStorage-backed design that survived reloads and caused a
+# restored session with an empty id that never reconnected its SSE stream.)
+
+export default function LiveChat() {
+  const [isOpen, setIsOpen] = useState(false);      # intent: panel visibility, starts closed on every load
+  const [hasAnimation, setHasAnimation] = useState(false);  # intent: keep node mounted 300ms for exit anim
+  const [messages, setMessages] = useState<ChatMessageDto[]>([]);
+  const [session, setSession] = useState<ChatSessionDto | null>(null);
+  const [input, setInput] = useState("");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [showForm, setShowForm] = useState(true);   # intent: intake form for first-time visitor name/email
+  const [status, setStatus] = useState<"idle" | "sending" | "error" | "connecting">("idle");
+  const [error, setError] = useState<string | null>(null);
+  const [unread, setUnread] = useState(0);          # intent: badge count while panel is closed
+  const [attachment, setAttachment] = useState<File | null>(null);  # intent: the single pending upload (cleared after send)
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);  # intent: scroll anchor
+  const fileInputRef = useRef<HTMLInputElement>(null);  # intent: hidden <input type=file> driven by the paperclip button
+  const inputRef = useRef<HTMLTextAreaElement>(null);   # intent: message textarea
+  const nameInputRef = useRef<HTMLInputElement>(null);  # intent: intake name field (focus target when form shown)
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const sessionRef = useRef<ChatSessionDto | null>(session);  # intent: read latest session inside SSE closures
+  const visitorIdRef = useRef<string>("");          # intent: in-memory client token; cleared on reset
+  const nameRef = useRef(name);                     # intent: mirror name/email so resetChat needs no deps
+  const emailRef = useRef(email);
+
+  useEffect(() => { nameRef.current = name; emailRef.current = email; }, [name, email]);
+
+  function ensureVisitorId(): string {
+    # intent: lazily mint a UUID for a brand-new conversation; reused until reset.
+    if (!visitorIdRef.current) visitorIdRef.current = crypto.randomUUID();
+    return visitorIdRef.current;
+  }
+
+  # intent: STABLE callback (empty dep array). Reads name/email through refs so
+  # its identity never changes. This is critical: the focus effect below lists
+  # resetChat as a dependency, so an unstable resetChat (its previous [name,email]
+  # deps) re-ran the focus effect on EVERY keystroke and re-focused the message
+  # textarea ~300ms later -- stealing focus away from the name/email inputs.
+  const resetChat = useCallback((clearMessages = false) => {
+    visitorIdRef.current = "";
+    setSession(null);
+    setShowForm(!nameRef.current.trim() || !emailRef.current.trim());
+    setError(null);
+    if (clearMessages) setMessages([]);
+  }, []);
+
+  const [showCloseModal, setShowCloseModal] = useState(false);  # intent: confirm-before-close overlay
+
+  const greeting = process.env.NEXT_PUBLIC_LIVE_CHAT_GREETING || "Hi there! How can we help you today?";
+  const enabled = process.env.NEXT_PUBLIC_LIVE_CHAT_ENABLED !== "false";
+  # intent: attachments default ON; only "false" hides the picker. The server
+  # re-checks the SAME flag, so this is purely presentational — never the gate.
+  const attachmentsEnabled = process.env.NEXT_PUBLIC_LIVE_CHAT_ATTACHMENTS_ENABLED !== "false";
+
+  useEffect(() => { sessionRef.current = session; }, [session]);  # intent: keep ref in sync for closures
+
+  # intent: auto-scroll to newest message whenever the list grows.
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, []);
+  useEffect(() => { scrollToBottom(); }, [messages, scrollToBottom]);
+
+  # intent: mount the panel node during the exit animation, unmount after 300ms.
+  useEffect(() => {
+    if (isOpen) setHasAnimation(true);
+    else { const t = setTimeout(() => setHasAnimation(false), 300); return () => clearTimeout(t); }
+  }, [isOpen]);
+
+  # ---------------------------------------------------------------------------
+  # SSE stream lifecycle
+  # intent: open exactly one EventSource per active, non-closed session while the
+  # panel is open. Keyed on [isOpen, session?.id] so it connects only after a
+  # session id exists (i.e. after the first successful send) and tears down on
+  # close/hide. It listens for four server events: open, history, message, status.
+  # ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (!isOpen || !session?.id || session?.status === "closed") return;
+    const visitorId = session.visitorId;
+    setStatus("connecting");
+    const es = new EventSource(`/api/chat/stream?visitorId=${encodeURIComponent(visitorId)}`);
+    eventSourceRef.current = es;
+
+    es.addEventListener("open", () => { setStatus("idle"); setError(null); });
+
+    # intent: "history" carries a full ordered snapshot; merge (dedupe by id) so
+    # optimistic/echoed messages don't duplicate. mergeMessages sorts by createdAt.
+    es.addEventListener("history", (event) => {
+      const data = JSON.parse(event.data);
+      if (Array.isArray(data.messages)) setMessages((prev) => mergeMessages(prev, data.messages));
+      if (data.session) setSession((prev) => (prev ? { ...prev, ...data.session } : prev));
+      if (!isOpen) setUnread((u) => u + 1);
+    });
+
+    # intent: "message" is a single incremental message (usually a support reply).
+    es.addEventListener("message", (event) => {
+      const msg = JSON.parse(event.data) as ChatMessageDto;
+      setMessages((prev) => mergeMessages(prev, [msg]));
+      if (!isOpen) setUnread((u) => u + 1);
+    });
+
+    # intent: "status: closed" means the agent (or topic close) ended the chat.
+    # Mark closed, stop the stream, and drop the in-memory token so the next open
+    # begins a fresh session.
+    es.addEventListener("status", (event) => {
+      const data = JSON.parse(event.data);
+      if (data.status === "closed" && data.sessionId) {
+        setSession((prev) => (prev ? { ...prev, status: "closed" } : prev));
+        setError("This chat session has been closed. Close and reopen the chat to start a new conversation.");
+        setStatus("idle");
+        eventSourceRef.current?.close();
+        visitorIdRef.current = "";
+      }
+    });
+
+    # intent: EventSource auto-reconnects; suppress the error banner if we closed
+    # intentionally because the session is already closed.
+    es.addEventListener("error", () => {
+      if (sessionRef.current?.status === "closed") { setStatus("idle"); return; }
+      setStatus("error");
+      setError("Connection lost. Reconnecting...");
+    });
+
+    return () => { es.close(); eventSourceRef.current = null; };  # intent: cleanup on deps change/unmount
+  }, [isOpen, session?.id]);
+
+  # ---------------------------------------------------------------------------
+  # Focus + closed-session reset
+  # intent: depends ONLY on [isOpen] (resetChat is stable). On open, focus the
+  # name field while the intake form is visible, else the message textarea. On
+  # hide, if the session was closed, reset to a fresh state. Because the deps no
+  # longer include anything that changes while typing, this can never steal focus
+  # mid-input. (This is the fix for the focus-stealing bug.)
+  # ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (isOpen) {
+      const timer = setTimeout(() => { (nameInputRef.current ?? inputRef.current)?.focus(); }, 300);
+      setUnread(0);
+      return () => clearTimeout(timer);
+    }
+    if (sessionRef.current?.status === "closed") resetChat(true);
+  }, [isOpen, resetChat]);
+
+  # ---------------------------------------------------------------------------
+  # Send  (text OR text+attachment)
+  # intent: validate intake, POST to /api/chat/send, adopt the returned session +
+  # server-authoritative visitorId, merge returned messages, clear the input +
+  # pending attachment, and hide the intake form once the first message is
+  # accepted. Distinguishes a "closed" error (reset + friendly notice) from
+  # transport errors.
+  # intent (ATTACHMENTS): a send is allowed when there is text OR a pending file
+  # (a bare attachment with no caption is valid). When a file is present the body
+  # switches to multipart/form-data and the Content-Type header is DELIBERATELY
+  # omitted so the browser sets the multipart boundary itself. The upload timeout
+  # is longer (30s vs 10s) to accommodate larger files.
+  # ---------------------------------------------------------------------------
+  async function handleSend() {
+    const text = input.trim();
+    if ((!text && !attachment) || status === "sending") return;   # intent: text OR file required
+    if (session?.status === "closed") { setError("This chat session has been closed. ..."); return; }
+    setError(null);
+    if (showForm && (!name.trim() || !email.trim())) { setError("Please enter your name and email before sending."); return; }
+    setStatus("sending");
+    const visitorId = session?.visitorId || ensureVisitorId();
+    const pageUrl = typeof window !== "undefined" ? window.location.href : undefined;
+    try {
+      let res;
+      if (attachment) {
+        # intent: multipart path — same field names as the JSON body plus "file".
+        # NO Content-Type header (browser adds boundary). message is the caption.
+        const form = new FormData();
+        form.set("visitorId", visitorId);
+        if (name.trim())  form.set("name", name.trim());
+        if (email.trim()) form.set("email", email.trim());
+        if (text)         form.set("message", text);
+        if (pageUrl)      form.set("pageUrl", pageUrl);
+        form.set("file", attachment, attachment.name);
+        res = await fetch("/api/chat/send", { method: "POST", body: form, signal: AbortSignal.timeout(30000) });
+      } else {
+        res = await fetch("/api/chat/send", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ visitorId, name: name.trim() || undefined, email: email.trim() || undefined,
+            message: text, pageUrl }),
+          signal: AbortSignal.timeout(10000),   # intent: bound the request to avoid a stuck spinner
+        });
+      }
+      if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(body.error || "Failed to send message"); }
+      const data = await res.json();
+      if (data.session) { setSession(data.session); visitorIdRef.current = data.visitorId; }
+      if (Array.isArray(data.messages)) setMessages((prev) => mergeMessages(prev, data.messages));
+      setInput("");
+      setAttachment(null);                                  # intent: clear pending file
+      if (fileInputRef.current) fileInputRef.current.value = "";  # intent: reset the input so re-picking the same file fires onChange
+      if (showForm) setShowForm(false);
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("closed")) {
+        resetChat(true);
+        setError("This chat session has been closed. Send a new message to start a fresh chat.");
+      } else setError(formatSendError(err));
+    } finally { setStatus("idle"); }
+  }
+
+  # intent: humanize AbortError/TypeError/network failures into UI copy.
+  function formatSendError(err: unknown): string { /* AbortError -> timeout copy; TypeError -> network copy */ }
+
+  # ---------------------------------------------------------------------------
+  # Close flow
+  # intent: handleClose decides between an immediate hide and the confirm modal.
+  # If there is no live session (no id) or it is already closed, just hide (and
+  # reset if closed). Otherwise show the modal. Both the header X and the floating
+  # bubble call this, so closing is always confirmed for an active session.
+  # ---------------------------------------------------------------------------
+  function handleClose() {
+    if (session?.status === "closed" || !session?.id) {
+      if (session?.status === "closed") resetChat(true);
+      setIsOpen(false);
+      return;
+    }
+    setShowCloseModal(true);
+  }
+
+  # intent: "No, just hide" -> keep the session alive, only hide the panel.
+  function handleCloseCancel() { setShowCloseModal(false); setIsOpen(false); }
+
+  # intent: "Yes, close" -> POST /api/chat/close, then drop token + messages and
+  # hide. The server broadcasts status:closed to any other open tabs.
+  async function closeSession() {
+    if (!session?.visitorId) return;
+    setStatus("sending");
+    try {
+      const res = await fetch("/api/chat/close", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visitorId: session.visitorId }), signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(body.error || "Failed to close session"); }
+      const data = await res.json();
+      if (data.session) setSession(data.session);
+      visitorIdRef.current = "";
+      setMessages([]); setError(null); setShowCloseModal(false); setIsOpen(false);
+    } catch (err) { setError(formatSendError(err)); setShowCloseModal(false); }
+    finally { setStatus("idle"); }
+  }
+
+  # intent: Enter sends, Shift+Enter newline.
+  function handleKeyDown(e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }
+
+  if (!enabled) return null;   # intent: feature flag kill-switch
+
+  # --- Render (structure only) ---------------------------------------------
+  # intent: panel mounts while (isOpen || hasAnimation). Header X -> handleClose.
+  #   Messages list (visitor right / support left, per-message errorText badge).
+  #     ATTACHMENTS: inside each bubble, when msg.attachment is set AND we have a
+  #     session.visitorId, render <ChatAttachment .../> ABOVE the (optional) text.
+  #     The text node is only rendered when msg.text is non-empty (attachment-only
+  #     messages have text === "").
+  #   Intake form (name+email) shown only while showForm && no messages; name
+  #     input carries nameInputRef for the focus target.
+  #   ATTACHMENTS input area: when attachmentsEnabled, render a hidden
+  #     <input type=file ref=fileInputRef> plus a paperclip button that calls
+  #     fileInputRef.current.click(); onChange sets the pending File. When a file
+  #     is pending, show a removable chip (name + formatBytes(size) + X) ABOVE the
+  #     textarea row. Both the paperclip and chip-remove are disabled while
+  #     closed/sending.
+  #   Textarea disabled when session.status === "closed"; send button disabled
+  #     when closed/sending/(no text AND no attachment).
+  #   Confirm modal overlays the panel when showCloseModal.
+  #   Floating bubble: while open -> handleClose() (routes active sessions through
+  #     the confirm modal); while closed -> setIsOpen(true); shows unread badge.
+  # -------------------------------------------------------------------------
+}
+
+# intent: merge incoming into existing by id (Map dedupe) then sort ascending by
+# createdAt so history + live events converge to one ordered, gap-free list.
+function mergeMessages(existing, incoming) { /* Map by id; sort by createdAt asc */ }
+
+# intent: locale-aware HH:MM timestamp per bubble.
+function formatTime(iso) { /* new Date(iso).toLocaleTimeString(...) */ }
+
+# intent: human-readable size label (B/KB/MB/GB) for the pending-file chip and
+# the document download chip.
+function formatBytes(bytes) { /* scale by 1024; 1 decimal under 10 for KB+ */ }
+
+# intent: renders ONE message attachment from its metadata DTO. It NEVER embeds
+# bytes; it builds the authenticated URL and lets the browser fetch:
+#   base = `/api/chat/attachments/${messageId}?visitorId=${visitorId}`
+# and switches on attachment.type:
+#   image -> <a href=base target=_blank><img src=base .../></a>  (click = full view)
+#   video -> <video src=base controls/>
+#   audio|voice -> <audio src=base controls/>
+#   document (default) -> a download chip <a href=`${base}&download=1` download>
+#     with a file icon, the name, formatBytes(size) and a download icon; the chip
+#     tint differs for visitor (on-blue) vs support (on-gray) bubbles.
+# intent: the visitorId in the query string is the per-conversation shared secret
+# the server checks — see section 13. The component takes { attachment, messageId,
+# visitorId, direction }.
+function ChatAttachment({ attachment, messageId, visitorId, direction }) { /* see above */ }
+
+# =============================================================================
+# 2. app/api/chat/send/route.ts  --  visitor -> Telegram relay (POST)
+# =============================================================================
+export const dynamic = "force-dynamic";   # intent: never statically cache a mutation route
+const sendSchema = z.object({
+  visitorId: z.string().min(1).max(100).optional(),
+  name: z.string().max(100).optional(),
+  email: z.string().email().max(255).optional().or(z.literal("")),
+  message: z.string().min(1).max(2000),
+  pageUrl: z.string().url().max(1000).optional().or(z.literal("")),
+});   # intent: strict Zod validation; empty-string escape hatch for optional url/email
+
+# intent: shared helpers factored out so the text and upload paths behave
+# identically for session resolution + topic creation.
+async function findOrCreateSession(ctx) {
+  # intent: find-or-create by visitorId (unique); mint a server-side UUID when the
+  # client didn't supply one; merge any new name/email/pageUrl into an existing row.
+  let session = ctx.visitorId ? await findChatSessionByVisitorId(ctx.visitorId) : null;
+  if (!session) session = await createChatSession({ visitorId: ctx.visitorId || randomUUID(), ...ctx });
+  else if (ctx.name || ctx.email || ctx.pageUrl) session = await updateChatSession(session.id, { /* merge, keep existing */ });
+  return session;
+}
+async function ensureTopic(session) {
+  # intent: lazily create ONE Telegram forum topic per session; THROWS
+  # ChatTelegramError on failure so each caller can decide how to record it.
+  if (session.telegramThreadId) return session;
+  const topic = await createForumTopic(`Chat: ${session.name ?? session.visitorId.slice(0, 8)}`);
+  return updateChatSessionThread(session.id, process.env.TELEGRAM_SUPPORT_CHAT_ID!, topic.message_thread_id);
+}
+
+export async function POST(req) {
+  # intent: per-route Redis rate limit FIRST (AGENTS.md convention). Returns a
+  # ready 429 response when exceeded.
+  const blocked = await applyRouteLimit(req, "chat.send"); if (blocked) return blocked;
+  # intent: ONE route, TWO content types. multipart => a file upload; anything
+  # else => a JSON text message. try/catch maps SyntaxError -> VALIDATION else INTERNAL.
+  try {
+    if ((req.headers.get("content-type") ?? "").includes("multipart/form-data")) return await handleUpload(req);
+    return await handleText(req);
+  } catch (err) { /* SyntaxError -> VALIDATION; else INTERNAL */ }
+}
+
+# --- text path (unchanged behavior, now a helper) ---------------------------
+async function handleText(req) {
+  const parsed = sendSchema.safeParse(await req.json());
+  if (!parsed.success) return apiError({ code: ErrorCode.VALIDATION, ... });
+  const { visitorId, name, email, message, pageUrl } = parsed.data;
+  let session = await findOrCreateSession({ visitorId, name, email: email||undefined, pageUrl: pageUrl||undefined,
+    ip: getClientIp(req), userAgent: req.headers.get("user-agent") });
+  if (session.status === "closed") return apiError({ code: ErrorCode.VALIDATION, message: "This chat session has been closed." });
+
+  # intent: on the FIRST message create the topic; on failure persist the message
+  # with errorText, broadcast it, and return PROVIDER_ERROR (kept from original).
+  const hadTopic = Boolean(session.telegramThreadId);
+  if (!hadTopic) {
+    try { session = await ensureTopic(session); }
+    catch (err) { /* persist visitor msg w/ errorText, broadcast, return PROVIDER_ERROR */ }
+  }
+  # intent: first message carries the visitor-context header; later ones are plain
+  # HTML-escaped replies. Telegram failure is non-fatal (persist w/ errorText).
+  const telegramText = hadTopic ? formatVisitorReply(message)
+    : formatVisitorContext(message, { name, email, pageUrl, ip, countryCode, visitorId });
+  let telegramMessageId;
+  try { telegramMessageId = (await sendMessageToTopic(telegramText, session.telegramThreadId!)).message_id; } catch {}
+  const dbMessage = await createChatMessage({ chatSessionId: session.id, direction: visitor, text: message,
+    telegramMessageId, errorText: telegramMessageId ? undefined : "Failed to deliver to Telegram" });
+  await publishChatEvent(session.id, { type: "message", sessionId: session.id, message: toMessageDto(dbMessage) });
+  return Response.json({ session: toSessionDto(session), visitorId: session.visitorId,
+    messages: (await listChatMessages(session.id)).map(toMessageDto) });
+}
+
+# --- upload path -------------------------------------------------------------
+const uploadFieldsSchema = z.object({ /* visitorId/name/email/pageUrl + message OPTIONAL (caption) */ });
+async function handleUpload(req) {
+  # intent: SERVER-SIDE kill-switch. The NEXT_PUBLIC_* flag only hides the client
+  # picker; because that value is forgeable, re-check the SAME predicate here so a
+  # disabled state is a real control. clientAttachmentsEnabled() lives in storage.ts.
+  if (!clientAttachmentsEnabled()) return apiError({ code: ErrorCode.FORBIDDEN, message: "Attachments are disabled." });
+
+  const form = await req.formData();
+  const fields = uploadFieldsSchema.safeParse({ /* read the text fields from form */ });
+  if (!fields.success) return apiError({ code: ErrorCode.VALIDATION, ... });
+
+  # intent: validate the file: present, non-empty, and within maxUploadBytes()
+  # (CHAT_MAX_UPLOAD_MB). Reject with VALIDATION otherwise.
+  const file = form.get("file");
+  if (!(file instanceof File))       return apiError({ code: ErrorCode.VALIDATION, message: "No file provided." });
+  if (file.size === 0)               return apiError({ code: ErrorCode.VALIDATION, message: "The uploaded file is empty." });
+  if (file.size > maxUploadBytes())  return apiError({ code: ErrorCode.VALIDATION, message: "File exceeds the maximum size ..." });
+
+  const { visitorId, name, email, message, pageUrl } = fields.data;
+  const caption = (message || "").trim();
+  let session = await findOrCreateSession({ visitorId, name, email: email||undefined, pageUrl: pageUrl||undefined,
+    ip: getClientIp(req), userAgent: req.headers.get("user-agent") });
+  if (session.status === "closed") return apiError({ code: ErrorCode.VALIDATION, message: "This chat session has been closed." });
+
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const mime  = file.type || "application/octet-stream";
+  const attachmentType = attachmentTypeFromMime(mime);      # intent: image/video/audio/document bucket
+  const fileName = file.name || `upload-${Date.now()}`;
+
+  # intent: STORE FIRST, relay second. Persisting the bytes locally before any
+  # network call guarantees the visitor can always see their own upload even if
+  # Telegram delivery subsequently fails. saveChatFile returns the relative path.
+  const storedPath = await saveChatFile(session.id, fileName, bytes);
+
+  # intent: ensure a topic then relay the file — BOTH best-effort. A failure is
+  # recorded on the persisted message via errorText (NOT a hard error) so the file
+  # still shows in the UI. sendMediaToTopic picks sendPhoto/sendVideo/... by type.
+  let sendError = null, telegramMessageId;
+  try {
+    session = await ensureTopic(session);
+    telegramMessageId = (await sendMediaToTopic(session.telegramThreadId!,
+      { type: attachmentType, data: bytes, fileName, mime, caption: caption || undefined })).message_id;
+  } catch (err) { sendError = (err instanceof ChatTelegramError) ? err : null; }
+
+  const dbMessage = await createChatMessage({ chatSessionId: session.id, direction: visitor, text: caption,
+    telegramMessageId, attachmentType, attachmentName: fileName, attachmentMime: mime,
+    attachmentSize: bytes.byteLength, attachmentPath: storedPath,
+    errorText: telegramMessageId ? undefined : `Failed to deliver attachment to Telegram${sendError ? `: ${sendError.message}` : ""}` });
+  await publishChatEvent(session.id, { type: "message", sessionId: session.id, message: toMessageDto(dbMessage) });
+  return Response.json({ session: toSessionDto(session), visitorId: session.visitorId,
+    messages: (await listChatMessages(session.id)).map(toMessageDto) });
+}
+# NOTE (edge case): if a visitor's very FIRST message is an attachment, the file
+# is relayed with its caption but the visitor-context header (name/email/ip) is
+# only built on the TEXT path. Emit a separate context message first if that
+# header is important for your agents.
+
+# =============================================================================
+# 3. app/api/chat/close/route.ts  --  visitor-initiated close (POST)
+# =============================================================================
+export const dynamic = "force-dynamic";
+const closeSchema = z.object({ visitorId: z.string().min(1).max(100) });
+export async function POST(req) {
+  const blocked = await applyRouteLimit(req, "chat.close"); if (blocked) return blocked;
+  const { visitorId } = closeSchema.parse(await req.json());
+  const session = await findChatSessionByVisitorId(visitorId);
+  if (!session) return apiError({ code: ErrorCode.NOT_FOUND, ... });
+  # intent: idempotent — already-closed returns the session unchanged, no re-broadcast.
+  if (session.status === "closed") return Response.json({ session: toSessionDto(session) });
+  const updated = await closeChatSessionByVisitorId(visitorId);
+  # intent (ATTACHMENTS): remove all stored files for this conversation on close.
+  # deleteSessionFiles is best-effort (never throws) and keyed on the session id.
+  await deleteSessionFiles(updated.id);
+  # intent: broadcast status:closed so other tabs/workers tear down their streams.
+  await publishChatEvent(updated.id, { type: "status", sessionId: updated.id, status: "closed" });
+  return Response.json({ session: toSessionDto(updated) });
+}
+
+# =============================================================================
+# 4. app/api/chat/stream/route.ts  --  SSE downstream (GET)
+# =============================================================================
+export const dynamic = "force-dynamic";
+const POLL_INTERVAL_MS = 3000;       # intent: DB polling cadence when pub/sub is down
+const KEEPALIVE_INTERVAL_MS = 15000; # intent: comment frames to keep the connection warm
+
+export async function GET(req) {
+  const blocked = await applyRouteLimit(req, "chat.stream"); if (blocked) return blocked;
+  const visitorId = req.nextUrl.searchParams.get("visitorId");
+  if (!visitorId) return new Response("visitorId required", { status: 400 });
+  const session = await findChatSessionByVisitorId(visitorId);
+  # intent: unknown visitor -> return a minimal, immediately-closable event-stream.
+  if (!session) return new Response(":no session\n\n", { headers: { "Content-Type": "text/event-stream", ... } });
+
+  # intent: SINGLE shared cleanup used by both cancel() AND the request-abort
+  # listener. Clears both timers and tears down the Redis subscriber exactly once
+  # (idempotent via the null-guards + `closed` flag). Declared in the outer scope
+  # so req.signal can reach it before the ReadableStream even starts.
+  const cleanup = () => {
+    if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+    if (keepaliveInterval) { clearInterval(keepaliveInterval); keepaliveInterval = null; }
+    if (unsubscribe) { try { unsubscribe(); } catch (err) { trace.error("cleanup unsubscribe error", ...); } unsubscribe = null; }
+    closed = true;
+  };
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      # intent: release resources when the BROWSER disconnects/closes the
+      # EventSource. `cancel()` only fires when the consumer cancels the reader;
+      # on a real client disconnect Next.js aborts req.signal instead, so without
+      # this listener the Redis subscriber + intervals would leak on every reload.
+      req.signal.addEventListener("abort", cleanup);
+
+      # intent: dedupe set + counter so history polling and live events never
+      # double-emit the same message id.
+      let lastMessageCount = 0; const historyMessageIds = new Set(); let historyLoaded = false; const pendingEvents = [];
+      const enqueue = (text) => { if (closed) return; try { controller.enqueue(encoder.encode(text)); } catch {} };  # intent: swallow post-close writes
+      const sendMessage = (m) => { historyMessageIds.add(m.id); lastMessageCount++; enqueue(`event: message\ndata: ${JSON.stringify(m)}\n\n`); };
+      const sendStatus  = (s) => enqueue(`event: status\ndata: ${JSON.stringify(s)}\n\n`);
+      const sendHistory = async () => { const msgs = await listChatMessages(session.id); if (msgs.length > lastMessageCount) { /* reset dedupe set + emit full history frame */ } };
+      const handleEvent = (e) => { if (e.type === "message") { if (historyMessageIds.has(e.message.id)) return; sendMessage(e.message); } else if (e.type === "status") sendStatus({ sessionId: e.sessionId, status: e.status }); };
+      # intent: buffer events that arrive BEFORE the initial history flush, then
+      # replay them so no message is lost in the subscribe/query race window.
+      const eventHandler = (e) => { if (!historyLoaded) { pendingEvents.push(e); return; } handleEvent(e); };
+      const startPolling = () => { if (!pollInterval) pollInterval = setInterval(() => sendHistory().catch(...), POLL_INTERVAL_MS); };
+      const stopPolling  = () => { if (pollInterval) { clearInterval(pollInterval); pollInterval = null; } };
+
+      enqueue(":ok\n\n");   # intent: first byte opens the browser connection
+
+      # intent: subscribe BEFORE the first history read (order matters). Pass
+      # onDisconnect/onReconnect so Redis loss transparently switches to DB polling.
+      unsubscribe = await subscribeChatEvents(session.id, eventHandler, { onDisconnect: startPolling, onReconnect: stopPolling });
+      if (!unsubscribe) startPolling();     # intent: no pub/sub at all -> poll fallback
+      await sendHistory(); historyLoaded = true;
+      for (const e of pendingEvents) handleEvent(e); pendingEvents.length = 0;   # intent: flush buffered events
+      keepaliveInterval = setInterval(() => enqueue(":keepalive\n\n"), KEEPALIVE_INTERVAL_MS);
+    },
+    # intent: consumer-cancel path — delegates to the same shared cleanup.
+    cancel() { cleanup(); },
+  });
+  # intent: THESE HEADERS ARE THE FIX for "server logs show the message was sent
+  # but the browser never received it." Without them Next.js (and any reverse
+  # proxy like Nginx) may gzip/buffer the response and hold SSE frames until the
+  # stream ends — so live `event: message` frames never flush to the EventSource.
+  #   - "no-transform"          : forbids proxies from compressing/buffering.
+  #   - "X-Accel-Buffering: no" : disables Nginx proxy_buffering for this route.
+  # With these set, each enqueue() flushes immediately and support replies appear
+  # in real time.
+  return new Response(stream, { headers: {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  } });
+}
+
+# =============================================================================
+# 5. app/api/chat/telegram/route.ts  --  inbound webhook (POST)
+# =============================================================================
+export const dynamic = "force-dynamic";
+export async function POST(req) {
+  # intent: authenticate with Telegram's secret-token header before anything else.
+  if (!validateWebhookSecret(req.headers.get("x-telegram-bot-api-secret-token"))) return apiError({ code: ErrorCode.UNAUTHORIZED, ... });
+  const update = await req.json();
+  const { message, text } = extractUpdateText(update);   # intent: message ?? edited_message
+  if (!message) return Response.json({ ok: true });
+  if (isBotMessage(message)) return Response.json({ ok: true });   # intent: ignore our own bot echoes
+
+  # intent: resolve the session two ways: by forum thread id, else by the replied
+  # message's telegramMessageId (covers replies that omit thread id).
+  const threadId = extractThreadId(message);
+  let session = threadId ? await findChatSessionByThreadId(threadId) : null;
+  if (!session && message.reply_to_message?.message_id) session = await findChatSessionByTelegramMessageId(message.reply_to_message.message_id);
+  if (!session) return Response.json({ ok: true });   # intent: ack unknown updates so Telegram stops retrying
+
+  # intent: "/close" command OR a forum_topic_closed service message ends the
+  # session and broadcasts status:closed to the visitor's stream.
+  if (text?.trim() === "/close" || message.forum_topic_closed) {
+    const updated = await closeChatSession(session.id);
+    # intent (ATTACHMENTS): delete this conversation's stored files on close too.
+    if (updated) { await deleteSessionFiles(session.id);
+      await publishChatEvent(session.id, { type: "status", sessionId: session.id, status: "closed" }); }
+    return Response.json({ ok: true });
+  }
+
+  # intent (ATTACHMENTS): agent-sent media (photo/video/document/audio/voice). Runs
+  # BEFORE the `!text` guard so media with no caption is handled (previously such
+  # updates were dropped). extractMedia normalizes the various Telegram media
+  # objects into { type, fileId, fileName, mime, size, caption }.
+  const media = extractMedia(message);
+  if (media) {
+    try {
+      # intent: Telegram gives a file_id, not bytes. Resolve a temporary file_path
+      # via getFile, download the bytes from the file host, store under the session
+      # folder, then persist + broadcast a support message with attachment metadata.
+      const file = await getTelegramFile(media.fileId);
+      if (!file.file_path) throw new Error("getFile returned no file_path");
+      const bytes = await downloadTelegramFile(file.file_path);
+      const storedPath = await saveChatFile(session.id, media.fileName, bytes);
+      const dbMessage = await createChatMessage({ chatSessionId: session.id, direction: support,
+        text: media.caption ?? "", telegramMessageId: message.message_id,
+        attachmentType: media.type, attachmentName: media.fileName, attachmentMime: media.mime,
+        attachmentSize: bytes.byteLength, attachmentPath: storedPath });
+      await publishChatEvent(session.id, { type: "message", sessionId: session.id, message: toMessageDto(dbMessage) });
+    } catch (err) {
+      # intent: degrade to a persisted placeholder (errorText) rather than losing
+      # the message when retrieval fails.
+      const dbMessage = await createChatMessage({ chatSessionId: session.id, direction: support,
+        text: media.caption ?? "", telegramMessageId: message.message_id,
+        errorText: "Attachment could not be retrieved from Telegram." });
+      await publishChatEvent(session.id, { type: "message", sessionId: session.id, message: toMessageDto(dbMessage) });
+    }
+    return Response.json({ ok: true });
+  }
+
+  if (!text) return Response.json({ ok: true });   # intent: ignore updates with neither text nor media
+
+  # intent: persist the agent reply (direction=support, keep telegramMessageId for
+  # future reply-resolution) and broadcast it to the visitor.
+  const dbMessage = await createChatMessage({ chatSessionId: session.id, direction: support, text, telegramMessageId: message.message_id });
+  await publishChatEvent(session.id, { type: "message", sessionId: session.id, message: toMessageDto(dbMessage) });
+  return Response.json({ ok: true });
+}
+
+# =============================================================================
+# 6. lib/chat/pubsub.ts  --  cross-worker fanout (Redis + in-memory fallback)
+# =============================================================================
+export function chatChannel(sessionId) { return `chat:${sessionId}`; }   # intent: one channel per session
+
+# intent: interface so callers don't care which transport is live.
+export interface ChatPubSub { subscribe(sessionId, handler): Promise<()=>void>; publish(sessionId, event): Promise<void>; close?(): Promise<void>; }
+
+# intent: process-local bus used when Redis is unavailable (single-worker dev).
+const memory: ChatPubSub = { /* Map<sessionId, Set<handler>>; publish iterates handlers */ };
+
+# intent: dedicated Redis subscriber connection. Tracks per-session handler sets,
+# subscribes on first handler / unsubscribes on last. Emits onDisconnect/onReconnect
+# so the stream route can toggle DB polling. close() detaches listeners + disconnects.
+class RedisChatPubSub implements ChatPubSub {
+  # messageHandler: strip "chat:" prefix, JSON.parse, dispatch to that session's
+  #   handlers (logs handlerCount; warns "no handlers for session" if the set is
+  #   empty — a strong signal that a subscribe/publish race dropped a message).
+  # handleDisconnect: edge-triggered (guard on this.connected) — fires onDisconnect
+  #   once so the stream flips to DB polling. Bound to close/end/error events.
+  # handleReconnect: bound to the "ready" event. Besides firing onReconnect, it
+  #   RE-SUBSCRIBES to every known channel:
+  #     const channels = [...this.handlers.keys()].map(chatChannel);
+  #     if (channels.length) this.subscriber.subscribe(...channels);
+  #   intent/FIX: ioredis has autoResubscribe, but channels subscribed BEFORE the
+  #   first "ready" can be missed on the initial connect/reconnect, so the socket
+  #   silently receives nothing. Forcing an explicit re-subscribe here is what
+  #   makes Telegram replies reliably reach the SSE stream after any blip.
+}
+
+# intent: publish is connection-cheap — reuse the shared client, fall back to the
+# in-memory bus if Redis throws. Safe to call from mutation routes.
+# NOTE: redis.publish returns the SUBSCRIBER COUNT — log it. `subscriberCount: 0`
+# is the canonical symptom of "message published but nobody was listening yet"
+# (e.g. the very first visitor message published before its EventSource attached
+# its Redis subscriber). Any value >= 1 means the fanout reached a live stream.
+export async function publishChatEvent(sessionId, event) {
+  try { const redis = await ensureRedis();
+        if (redis) { const count = await redis.publish(chatChannel(sessionId), JSON.stringify(event));
+                     trace.info("redis chat publish", { sessionId, subscriberCount: count }); return; } }
+  catch { /* fall through */ }
+  await memory.publish(sessionId, event);
+}
+
+# intent: subscribe creates a DEDICATED ioredis subscriber (a subscribed
+# connection cannot issue normal commands), wraps it in RedisChatPubSub, and
+# returns an unsubscribe that also closes that connection. Falls back to memory bus.
+export async function subscribeChatEvents(sessionId, handler, options) {
+  const redis = await ensureRedis();
+  if (redis) { const subscriber = new (await import("ioredis")).default(process.env.REDIS_URL ?? "redis://127.0.0.1:6379");
+    const sub = new RedisChatPubSub(subscriber, options); const unsub = await sub.subscribe(sessionId, handler);
+    return () => { unsub(); sub.close(); }; }
+  return memory.subscribe(sessionId, handler);
+}
+
+# =============================================================================
+# 7. lib/chat/telegram.ts  --  Bot API wrappers + startup webhook registration
+# =============================================================================
+export class ChatTelegramError extends Error { /* code, telegramCode, cause — lets routes branch on error kind */ }
+function requireEnv(name) { /* throw TELEGRAM_CONFIG_MISSING if absent */ }
+export function escapeHtml(text) { /* &<>" -> entities for parse_mode:"HTML" */ }
+
+# intent: single fetch helper with 10s timeout, structured logging, and Telegram
+# ok:false -> ChatTelegramError(TELEGRAM_API_ERROR) / network -> TELEGRAM_NETWORK_ERROR.
+async function telegramFetch<T>(method, body) { /* POST api.telegram.org/bot<token>/<method> */ }
+
+export async function createForumTopic(name) { /* createForumTopic; name sliced to 128 */ }
+export async function sendMessageToTopic(text, threadId, opts) { /* sendMessage w/ message_thread_id; text sliced to 4096; parse_mode HTML */ }
+export async function setTelegramWebhook(url, secret, allowedUpdates=["message","edited_message"]) { /* setWebhook w/ secret_token */ }
+export async function deleteTelegramWebhook() { /* deleteWebhook */ }
+export function validateWebhookSecret(header) { /* compare to TELEGRAM_WEBHOOK_SECRET; if unset, allow (dev) */ }
+export function extractThreadId(message) { /* message_thread_id ?? reply_to_message.message_thread_id */ }
+export function isBotMessage(message) { return message.from?.is_bot ?? false; }
+export function extractUpdateText(update) { const m = update.message ?? update.edited_message; return m ? { message: m, text: m.text } : {}; }
+export function formatVisitorContext(text, ctx) { /* HTML header: name/email/page/ip/country + token + escaped body */ }
+export function formatVisitorReply(text) { return escapeHtml(text); }
+
+# --- MEDIA (attachments) ----------------------------------------------------
+# intent: helper mapping a kind -> { method, field } (image->sendPhoto/photo,
+# video->sendVideo/video, audio->sendAudio/audio, voice->sendVoice/voice, and the
+# default document->sendDocument/document).
+function mediaMethodFor(type) { /* switch(type) -> { method, field } */ }
+# intent: OUTBOUND. Relay a visitor file into the forum topic. Builds a multipart
+# FormData: chat_id, message_thread_id, and the media Blob under the method's field
+# (built from media.data + media.mime, named media.fileName). When a caption is
+# present it is escapeHtml()'d, sliced to 1024, and sent with parse_mode:HTML
+# (matching the text convention). 30s timeout; ok:false -> ChatTelegramError,
+# network -> TELEGRAM_NETWORK_ERROR. NOTE: the input is an INLINE object param, not
+# a named exported type.
+export async function sendMediaToTopic(threadId, { type, data, fileName, mime, caption }) { /* multipart send<Kind> */ }
+
+# intent: INBOUND step 1. Resolve a file_id to a TelegramFile carrying a temporary
+# file_path (calls the getFile Bot API method via telegramFetch).
+export async function getTelegramFile(fileId) { /* getFile -> { file_id, file_path, file_size } */ }
+
+# intent: INBOUND step 2. Download the raw bytes from the FILE host (a DIFFERENT
+# base URL than the API host): https://api.telegram.org/file/bot<token>/<file_path>.
+# 30s timeout; returns a Buffer; wraps !ok and network errors as ChatTelegramError.
+export async function downloadTelegramFile(filePath) { /* GET file host -> Buffer */ }
+
+# intent: INBOUND normalizer. Inspect a TelegramMessage and return a TelegramMediaRef
+# or null. For `photo` (an array of sizes) it picks the LARGEST by file_size and
+# derives fileName/mime (photos have no name -> `photo-<unique>.jpg`, image/jpeg).
+# Other kinds prefer Telegram's file_name/mime_type with sensible fallbacks
+# (video -> .mp4/video/mp4, audio -> .mp3/audio/mpeg, voice -> `voice-<unique>.ogg`/
+# audio/ogg, document -> `file-<unique>`/application/octet-stream). Carries caption.
+#   TelegramMediaRef = { type: "image|video|audio|voice|document", fileId, fileName, mime, size, caption? }
+export function extractMedia(message) { /* photo|video|document|audio|voice -> TelegramMediaRef | null */ }
+
+# --- startup webhook registration (Redis-coordinated) ----------------------
+# intent: reads TELEGRAM_WEBHOOK_URL/SECRET/BOT_TOKEN. Uses Redis keys to store a
+# config hash + registered flag + timestamp. Acquires a short NX/EX lock so only
+# ONE clustered worker registers at a time. Re-registers when config changed or
+# the last registration is older than the interval; deletes the stale webhook
+# first. If Redis is down, registers directly (delete+set) without caching state.
+const WEBHOOK_LOCK_TTL_MS = 30000; const WEBHOOK_REREGISTER_INTERVAL_MS = 30000;
+export async function ensureTelegramWebhook() {
+  if (!url || !secret || !token) return;   # intent: no-op when unconfigured
+  const allowedUpdates = ["message", "edited_message"];   # intent: forum_topic_closed arrives inside "message"
+  const redis = await ensureRedis();
+  if (!redis) { await deleteTelegramWebhook().catch(()=>{}); await setTelegramWebhook(url, secret, allowedUpdates); return; }
+  const lock = await redis.set(WEBHOOK_LOCK_KEY, String(now), "EX", 30, "NX"); if (lock !== "OK") return;   # intent: single-flight
+  # ...compare stored hash + recency; delete old on config change; setWebhook; mset registered state; del lock in finally.
+}
+
+# =============================================================================
+# 8. lib/chat/db.ts  --  Prisma helpers + DTO mappers
+# =============================================================================
+# intent: thin, traced wrappers around Prisma; every function logs on error.
+findChatSessionByVisitorId(visitorId)          # unique lookup (client token)
+findChatSessionById(id)
+findChatSessionByThreadId(threadId)            # webhook -> session by forum topic
+findChatSessionByTelegramMessageId(msgId)      # webhook reply -> session via message join
+createChatSession(input) / updateChatSession(id, input)
+updateChatSessionThread(id, chatId, threadId)  # persist Telegram topic mapping after first send
+createChatMessage(input) / listChatMessages(id)  # id ordered by createdAt asc
+  # intent (ATTACHMENTS): createChatMessage's input now also accepts the optional
+  # attachmentType/Name/Mime/Size/Path fields; when present they are written to the
+  # row. A plain text message passes none of them (all stay null).
+getChatMessageWithSession(id)                  # message + its ChatSession (for the attachment route's authz)
+closeChatSession(id) / closeChatSessionByVisitorId(visitorId)  # set status="closed"
+toMessageDto(m) / toSessionDto(s)              # Prisma row -> client DTO (ISO dates, null->undefined)
+  # intent (ATTACHMENTS): toMessageDto attaches an `attachment` object built from
+  # the columns ONLY when attachmentType is set:
+  #   attachment: { type, name, mime, size }   # NB: never the path/bytes
+  # so the wire/DTO exposes metadata but never the storage location.
+
+# =============================================================================
+# 9. lib/chat/types.ts  --  shared contracts
+# =============================================================================
+type ChatDirection = "visitor" | "support";
+type ChatAttachmentType = "image" | "video" | "audio" | "voice" | "document";
+# intent: metadata-only attachment descriptor carried in the DTO; the bytes are
+# fetched separately via /api/chat/attachments/[id]. NO path/URL is exposed.
+interface ChatAttachmentDto { type: ChatAttachmentType; name; mime; size; }
+# intent: text may be "" for an attachment-only message; attachment is optional.
+interface ChatMessageDto { id; chatSessionId; direction; text; errorText?; attachment?: ChatAttachmentDto; createdAt; }
+interface ChatSessionDto { id; visitorId; name?; email?; status; createdAt; updatedAt; }
+# intent: the pub/sub payload is a discriminated union on `type`.
+type ChatEvent = { type:"message"; message:ChatMessageDto; sessionId } | { type:"status"; status; sessionId };
+# Telegram API shapes: TelegramApiResponse<T>, TelegramForumTopic, TelegramMessage
+#   (note reply_to_message + forum_topic_closed/reopened service fields), TelegramUpdate.
+# intent (ATTACHMENTS): TelegramMessage also carries optional media + caption:
+#   photo: TelegramPhotoSize[] (multiple sizes), video: TelegramVideo,
+#   document: TelegramDocument, audio/voice: TelegramAudio.
+#   TelegramFile = { file_id, file_unique_id, file_size?, file_path? } (from getFile).
+#   TelegramMediaRef = { type, fileId, fileName, mime, size, caption? } (from extractMedia).
+#   The sendMediaToTopic input is an INLINE object { type, data, fileName, mime, caption? }
+#   (no separate exported type).
+
+# =============================================================================
+# 10. instrumentation.ts  --  Next.js server startup hook
+# =============================================================================
+# intent: Next calls register() once when the server boots. Only on the Node.js
+# runtime (not edge) dynamically import the telegram lib and register the webhook;
+# swallow errors so a webhook failure never blocks server startup.
+export function register() {
+  if (process.env.NEXT_RUNTIME === "nodejs")
+    import("@/lib/chat/telegram").then((m) => m.ensureTelegramWebhook()).catch(() => {});
+}
+
+# =============================================================================
+# 11. STYLES  --  Tailwind utility classes + custom keyframes (app/globals.css)
+# =============================================================================
+# intent: the widget is styled entirely with Tailwind utility classes inline in
+# components/LiveChat.tsx plus TWO custom keyframe animations declared in
+# app/globals.css. There is NO CSS module / SCSS file — port the class strings
+# below and the keyframes and the widget looks identical in another Tailwind
+# project. Icons are FontAwesome (faHeadset/faTimes/faComments/faPaperPlane/
+# faSpinner/faCircleExclamation). Fixed bottom-right, z-50, above app chrome.
+#
+# --- custom keyframes to copy verbatim into globals.css ----------------------
+# intent: message-entrance fade+rise. Applied to each message bubble wrapper via
+# `animate-fade-in-up`, with an inline staggered style={{animationDelay:`${i*40}ms`}}
+# so a burst of history messages cascades in instead of popping at once.
+@keyframes fade-in-up { 0% { opacity:0; transform:translateY(8px); } 100% { opacity:1; transform:translateY(0); } }
+.animate-fade-in-up { animation: fade-in-up 0.3s ease-out both; }
+# intent: attention pulse for the unread badge (optional; the badge below also
+# uses Tailwind's built-in animate-bounce). Keep if you want a softer pulse.
+@keyframes chat-pulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.15); } }
+.animate-chat-pulse { animation: chat-pulse 1.5s ease-in-out infinite; }
+#
+# --- element-by-element class map (intent : Tailwind classes) ----------------
+# ROOT wrapper       : fixed bottom-4 right-4 z-50 flex flex-col items-end gap-3
+#   intent: pin the whole widget to the bottom-right; stack panel above bubble.
+# PANEL              : relative w-80 sm:w-96 max-h-[70vh] bg-white rounded-2xl
+#                      shadow-2xl border border-gray-200 flex flex-col overflow-hidden
+#                      transition-all duration-300 ease-out origin-bottom-right
+#   intent: card that grows from the bubble corner; capped at 70vh, scrolls inside.
+#   open  state add : opacity-100 translate-y-0 scale-100 pointer-events-auto
+#   close state add : opacity-0 translate-y-4 scale-95 pointer-events-none
+#   intent: mount-during-exit pattern (see hasAnimation) drives this enter/leave.
+# HEADER             : bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-4
+#                      flex items-center justify-between
+#   header title     : font-semibold text-sm ; subtitle text-xs text-blue-100
+#   close (X) button : text-white/80 hover:text-white p-1 rounded-full hover:bg-white/10
+# MESSAGES list      : flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50
+#   greeting bubble  : text-sm text-gray-600 bg-white p-3 rounded-xl shadow-sm border border-gray-100
+#   msg row wrapper  : flex flex-col max-w-[85%] animate-fade-in-up transition-all duration-300
+#     visitor variant: ml-auto items-end   (align own messages to the right)
+#     support variant: items-start          (align agent messages to the left)
+#   bubble base      : px-3 py-2 rounded-2xl text-sm shadow-sm
+#     visitor bubble : bg-blue-600 text-white rounded-br-md
+#     support bubble : bg-white text-gray-900 border border-gray-100 rounded-bl-md
+#     error bubble +  : border-red-300     (when message.errorText is set)
+#   ATTACHMENT (inside bubble, ABOVE text; text wrapper gets `mt-1.5` when both):
+#     image          : <a href=base target=_blank><img class="max-w-full max-h-56
+#                        rounded-lg object-contain bg-black/5" loading="lazy"/></a>
+#     video          : <video class="max-w-full max-h-56 rounded-lg bg-black/5" controls>
+#     audio|voice    : <audio class="max-w-full" controls>
+#     document chip  : flex items-center gap-2 px-2.5 py-2 rounded-lg transition-colors
+#                        + visitor: bg-blue-500/40 hover:bg-blue-500/60 text-white
+#                        + support: bg-gray-100 hover:bg-gray-200 text-gray-800
+#                        (file icon | name+formatBytes stacked | download icon ml-auto)
+#     text wrapper   : whitespace-pre-wrap break-words   (so captions wrap)
+#   error caption    : text-[10px] text-red-500 mt-1 flex items-center gap-1 (+ warning icon)
+#   timestamp        : text-[10px] text-gray-400 mt-1
+# INTAKE form area   : p-4 bg-white border-t border-gray-100 space-y-2
+#   name/email input : w-full px-3 py-2 text-sm rounded-xl border border-gray-200 bg-white
+#                      text-black placeholder:text-gray-400 focus:outline-none
+#                      focus:ring-2 focus:ring-blue-500 transition-shadow
+#   intent: name input carries nameInputRef (focus target while form is shown).
+# INPUT bar          : p-3 bg-white border-t border-gray-100
+#   error banner     : mb-2 text-xs text-red-600 bg-red-50 px-2 py-1 rounded-lg flex items-center gap-1
+#   pending-file chip : mb-2 flex items-center justify-between gap-2 text-xs bg-blue-50
+#                       text-blue-800 px-2 py-1.5 rounded-lg  (file icon + name + (size) + X remove)
+#                       intent: shown above the row ONLY while a file is staged.
+#   row              : flex items-end gap-2
+#   paperclip button : p-2.5 rounded-full text-gray-500 hover:text-blue-600 hover:bg-blue-50
+#                      disabled:opacity-50 disabled:cursor-not-allowed transition-colors
+#                      intent: rendered only when attachmentsEnabled; triggers the
+#                      hidden file input; disabled while closed/sending.
+#   hidden file input: type=file class="hidden" ref=fileInputRef (onChange stages the File)
+#   textarea         : flex-1 resize-none max-h-32 min-h-[2.5rem] px-3 py-2 text-sm rounded-xl
+#                      border border-gray-200 bg-white text-black placeholder:text-gray-400
+#                      focus:outline-none focus:ring-2 focus:ring-blue-500 transition-shadow
+#                      disabled:opacity-50 disabled:cursor-not-allowed
+#   intent: disabled + "Chat closed" placeholder when session.status === "closed".
+#   send button      : p-2.5 rounded-full bg-blue-600 text-white hover:bg-blue-700
+#                      disabled:opacity-50 disabled:cursor-not-allowed transition-all
+#                      hover:scale-105 active:scale-95   (spinner icon while sending)
+#                      intent: disabled when closed/sending/(no text AND no file).
+#   extra icons      : faPaperclip (attach), faDownload + faFileLines (doc chip)
+# CLOSE-CONFIRM modal: absolute inset-0 z-50 bg-black/60 flex items-center justify-center p-4
+#   dialog card      : bg-white rounded-xl shadow-xl p-5 w-full max-w-sm text-center
+#   confirm button   : px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50
+#   cancel button    : px-4 py-2 rounded-lg bg-gray-100 text-gray-700 text-sm font-medium hover:bg-gray-200
+# FLOATING bubble    : group relative w-14 h-14 rounded-full
+#                      bg-gradient-to-r from-blue-600 to-indigo-600 text-white
+#                      shadow-lg shadow-blue-600/30 flex items-center justify-center
+#                      transition-all duration-300 hover:scale-110 hover:shadow-xl
+#                      hover:shadow-blue-600/40 focus:outline-none focus:ring-4 focus:ring-blue-500/30
+#   unread badge     : absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold
+#                      w-5 h-5 rounded-full flex items-center justify-center border-2 border-white animate-bounce
+#   intent: icon swaps faComments (closed) <-> faTimes (open); badge shows unread.
+#
+# THEME KNOBS: swap the two `from-blue-600 to-indigo-600` gradients + the
+# `bg-blue-600`/`focus:ring-blue-500` accents to rebrand. Dark mode: flip
+# bg-white -> bg-gray-900, text-gray-900 -> text-gray-100, border-gray-* darker.
+
+# =============================================================================
+# 12. lib/chat/storage.ts  --  per-session on-disk attachment store
+# =============================================================================
+# intent: the single source of truth for WHERE attachment bytes live and HOW they
+# are named, plus the small config helpers the routes read. Node fs/promises only
+# (server runtime). Everything is keyed on the STABLE ChatSession.id so cleanup is
+# deterministic (the visitorId rotates and must NOT be used for paths).
+#
+# --- config helpers (read process.env at call time, never cached) -----------
+export function chatUploadRoot() { /* path.resolve(process.cwd(), CHAT_UPLOAD_DIR ?? "chat-uploads") */ }
+export function maxUploadBytes() { /* (CHAT_MAX_UPLOAD_MB ?? 20) * 1024 * 1024 */ }
+# intent: DEFAULT-ON; only the literal "false" disables. Read on BOTH client and
+# server from the same NEXT_PUBLIC_* var so the two agree.
+export function clientAttachmentsEnabled() { return process.env.NEXT_PUBLIC_LIVE_CHAT_ATTACHMENTS_ENABLED !== "false"; }
+# intent: coarse MIME -> attachment kind bucket used for storage + rendering +
+# choosing the Telegram send method.
+export function attachmentTypeFromMime(mime) { /* image/* video/* audio/* -> kind; else "document" */ }
+
+# --- path helpers (the security boundary) -----------------------------------
+# intent: reduce any value to a single safe path component: basename it, replace
+# every char outside [A-Za-z0-9._-] with "_", and reject "" / "." / "..".
+function sanitizeSegment(value) { /* basename + whitelist regex; throw on empty/./.. */ }
+export function sessionDir(sessionId) { return path.join(chatUploadRoot(), sanitizeSegment(sessionId)); }
+# intent: build a safe, UNIQUE on-disk name: `${randomUUID()}${ext}` where ext is
+# the sanitized (<=16 char, [A-Za-z0-9.] only) extension of the original name. The
+# random name means the client filename never influences the path (display name is
+# kept separately in attachmentName).
+export function safeFileName(originalName) { /* `${uuid}${safeExt}` */ }
+# intent: TRAVERSAL GUARD. Resolve a stored RELATIVE path back to an absolute path
+# and assert it stays within chatUploadRoot() (equal to root OR startsWith root+sep);
+# throw otherwise. Every read/serve goes through this so a crafted
+# "../../etc/passwd" attachmentPath cannot escape.
+export function resolveStoredPath(relative) { /* resolve + assert within root; else throw */ }
+
+# --- CRUD -------------------------------------------------------------------
+# intent: mkdir -p the sessionDir, write bytes to safeFileName(originalName), and
+# return the storage-root-RELATIVE path with FORWARD SLASHES ("<sessionId>/<uuid.ext>")
+# — that string is what gets stored in ChatMessage.attachmentPath.
+export async function saveChatFile(sessionId, originalName, data) { /* -> relativePath */ }
+export async function readChatFile(relativePath) { /* fs.readFile(resolveStoredPath(rel)) -> Buffer */ }
+# intent: best-effort recursive delete of a whole session's folder; swallow ENOENT
+# so calling it twice / on an empty session is harmless.
+export async function deleteSessionFiles(sessionId) { /* rm(sessionDir, { recursive, force }) */ }
+
+# =============================================================================
+# 13. app/api/chat/attachments/[id]/route.ts  --  authenticated byte serving (GET)
+# =============================================================================
+export const dynamic = "force-dynamic";
+export async function GET(req, { params }) {
+  # intent: dedicated rate-limit bucket for byte serving (LIMITS["chat.attachment"]).
+  const blocked = await applyRouteLimit(req, "chat.attachment"); if (blocked) return blocked;
+  const { id } = await params;                                   # message id (Next 15+ async params)
+  const visitorId = req.nextUrl.searchParams.get("visitorId");   # per-conversation shared secret
+  const forceDownload = req.nextUrl.searchParams.get("download") === "1";
+  if (!visitorId) return apiError({ code: ErrorCode.VALIDATION, message: "visitorId is required" });
+
+  const message = await getChatMessageWithSession(id);
+  if (!message || !message.attachmentPath) return apiError({ code: ErrorCode.NOT_FOUND, ... });
+  # intent: AUTHORIZATION — the caller's visitorId must equal the owning session's
+  # visitorId. This mirrors the visitor-token trust model used across the feature
+  # and prevents enumerating other conversations' files by guessing message ids.
+  if (message.chatSession.visitorId !== visitorId) return apiError({ code: ErrorCode.FORBIDDEN, ... });
+
+  let bytes; try { bytes = await readChatFile(message.attachmentPath); }  # goes through the traversal guard
+  catch { return apiError({ code: ErrorCode.NOT_FOUND, message: "Attachment file is no longer available." }); }
+
+  # intent: inline for rich media, attachment (download) for documents or ?download=1.
+  # Sanitize the filename in the header; nosniff + private cache. Stream the bytes.
+  const disposition = (forceDownload || message.attachmentType === "document") ? "attachment" : "inline";
+  return new Response(bytes, { status: 200, headers: {
+    "Content-Type": message.attachmentMime ?? "application/octet-stream",
+    "Content-Length": String(bytes.byteLength),
+    "Content-Disposition": `${disposition}; filename="${sanitize(message.attachmentName)}"`,
+    "Cache-Control": "private, max-age=3600",
+    "X-Content-Type-Options": "nosniff",
+  } });
+}
+
+# =============================================================================
+# 14. RETENTION + LIMITS  (glue for attachments)
+# =============================================================================
+# intent (RATE LIMIT): add a bucket for the serving route in lib/rate-limit.ts:
+#   LIMITS["chat.attachment"] = RL_CHAT_ATTACHMENT ?? 60   # per window
+# intent (CRON): the housekeeping cron (app/api/cron/housekeeping/route.ts) also
+# sweeps stale chat sessions so abandoned conversations (closed without an explicit
+# close, or never closed) don't leak files. For each ChatSession older than the
+# cutoff it calls deleteSessionFiles(session.id) BEFORE deleting the rows:
+#   const stale = await prisma.chatSession.findMany({ where: { updatedAt: { lt: cutoff } } });
+#   for (const c of stale) await deleteSessionFiles(c.id);
+#   await prisma.chatSession.deleteMany({ where: { id: { in: stale.map(c=>c.id) } } });
+# intent (GITIGNORE): add the upload root ("/chat-uploads") to .gitignore so stored
+# attachments are never committed.
+# intent (TESTS): see section 15 for the full attachment test plan.
+
+# =============================================================================
+# 15. TESTS  --  tests/chat.test.ts + tests/chat-attachments.test.ts (bun:test)
+# =============================================================================
+# intent: unit/integration tests run with `bun test`. Two files; package.json
+# scripts: "test:chat" and "test:chat-attachments". Run them SEPARATELY (see the
+# mock.module caveat at the end) — each passes on its own (30 and 18 assertions).
+#
+# HOW THE ROUTES ARE DRIVEN (no server): import the route handlers directly and
+# call POST(req)/GET(req, ctx). Requests are built with `new NextRequest(url, {..})`.
+#   - JSON send  : body: JSON.stringify(...), header Content-Type: application/json
+#   - upload     : body: a FormData with a Blob under "file" (NO Content-Type header)
+#   - attachment : GET with ?visitorId=..., ctx = { params: Promise.resolve({ id }) }
+# Telegram is exercised for real but `globalThis.fetch` is mocked and branched on
+# the URL (/createForumTopic, /getFile, /sendPhoto|sendDocument, the file host).
+# Redis is forced off (mock "@/lib/redis" ensureRedis -> null) so pub/sub uses the
+# in-memory bus and rate limits use local buckets.
+#
+# ---------------------------------------------------------------------------
+# A. tests/chat.test.ts  (webhook / inbound direction + existing chat behavior)
+# ---------------------------------------------------------------------------
+# MOCKS: "@/lib/chat/db" (in-memory), and "@/lib/chat/storage" is STUBBED so the
+# webhook path never touches disk — the stub records calls:
+#   saveChatFile(sessionId,name,data) -> pushes { sessionId, name, bytes } to
+#     `savedFiles` and returns `${sessionId}/${name}`
+#   deleteSessionFiles(sessionId)     -> pushes to `deletedSessions`
+# The db mock's toMessageDto also maps attachment* -> attachment DTO (so events
+# carry attachment metadata).
+# CASES (attachment-related):
+#   - "ignores messages with neither text nor media"  (renamed; the old wording
+#       said "non-text" but media is now handled, so the guard only drops updates
+#       with NO text AND NO media).
+#   - "deletes stored attachments when the topic is closed"  ( /close -> asserts
+#       deletedSessions contains the session id).
+#   - "downloads and relays an inbound photo, choosing the largest size": fetch
+#       mock returns getFile then raw bytes; asserts one broadcast message with
+#       attachment.type==="image", text===caption, savedFiles has 1 entry, and the
+#       getFile call used the LARGEST photo's file_id.
+#   - "relays an inbound document with its file name and mime": asserts
+#       attachment.type==="document", name/mime preserved from the Telegram doc.
+#
+# ---------------------------------------------------------------------------
+# B. tests/chat-attachments.test.ts  (storage + media helpers + upload + serving)
+# ---------------------------------------------------------------------------
+# SETUP: process.env.CHAT_UPLOAD_DIR = a fresh os.tmpdir() folder (REAL storage,
+# cleaned in afterAll). "@/lib/redis" mocked off. "@/lib/chat/db" is an in-memory
+# implementation that is a COMPLETE superset of the module (sessions/messages Maps
+# + every exported fn incl. getChatMessageWithSession, closeChatSession, etc.).
+# describe "chat storage" (REAL lib/chat/storage):
+#   - saveChatFile+readChatFile round-trip (relative path starts with "<sessionId>/").
+#   - deleteSessionFiles removes the folder (stat -> not exists).
+#   - resolveStoredPath("../../etc/passwd") THROWS (traversal guard).
+#   - attachmentTypeFromMime image/video/audio/pdf -> image/video/audio/document.
+#   - clientAttachmentsEnabled(): true by default, false only for "false".
+# describe "telegram media helpers" (REAL telegram, fetch mocked):
+#   - extractMedia picks the largest photo size; documents ok; null for plain text.
+#   - getTelegramFile resolves file_path; downloadTelegramFile hits the FILE host
+#       URL (/file/bot<token>/<path>); sendMediaToTopic posts to /sendPhoto with a
+#       FormData body.
+# describe "chat send route: uploads" (REAL send route, storage, telegram; db mock):
+#   - 403 when NEXT_PUBLIC_LIVE_CHAT_ATTACHMENTS_ENABLED="false" (server-side gate).
+#   - 400 when no file part.
+#   - image upload: 200, returned message has attachment DTO (type/name), text is
+#       the caption, errorText undefined, AND the bytes are readable from disk via
+#       the persisted attachmentPath.
+#   - Telegram failure (mock sendDocument ok:false): still 200, attachment persisted
+#       with errorText containing the Telegram description ("store-first" contract).
+# describe "chat attachment endpoint" (REAL GET + storage; db mock):
+#   - owner visitorId -> 200, Content-Type image/png, Content-Disposition inline,
+#       bytes match.
+#   - ?download=1 -> Content-Disposition attachment.
+#   - different visitorId -> 403;  missing visitorId -> 400.
+#
+# CAVEAT (why run files separately): bun's mock.module is PROCESS-GLOBAL, so if both
+# files run in one `bun test` invocation their differing "@/lib/chat/db" and
+# "@/lib/chat/storage" mocks collide. Keep each file's mocks a COMPLETE superset of
+# the module's exports (the in-memory db mock here defines ALL functions for that
+# reason) OR run the two files in separate processes (the npm scripts do).
+
+# =============================================================================
+# BUGS FIXED IN THIS PASS (for changelog/reference)
+# =============================================================================
+# [FOCUS-STEAL] The open/focus effect listed `resetChat` in its deps, and
+#   `resetChat` was memoized with [name, email]. Every keystroke in the intake
+#   fields recreated resetChat -> re-ran the effect -> a 300ms timer re-focused
+#   the message textarea, yanking the caret out of name/email. FIX: resetChat is
+#   now [] (reads name/email via refs) and the effect focuses name-vs-textarea
+#   based on which is mounted.
+# [REFRESH-RESET] visitorId + open state were persisted in sessionStorage and
+#   restored on mount (with an empty id that never reconnected the SSE stream).
+#   FIX: identity lives only in memory (visitorIdRef), so a window refresh always
+#   yields a fresh session and the restore-with-empty-id path is gone.
+# [BUBBLE-CLOSE] The floating bubble called setIsOpen(o=>!o) and discarded an
+#   active session with no confirmation. FIX: while open it calls handleClose(),
+#   which shows the confirm modal for a live session (matching the header X).
+# [SSE-BUFFERING] Telegram replies were persisted, published (subscriberCount:1),
+#   received by the stream handler, and enqueued — the server logs proved every
+#   step — yet the browser EventSource never fired its "message" listener. Cause:
+#   the SSE response was being buffered/compressed so live frames were held until
+#   the stream ended. FIX: add `Cache-Control: no-cache, no-transform` and
+#   `X-Accel-Buffering: no` to the /api/chat/stream response so each frame flushes
+#   immediately (see section 4).
+# [REDIS-RESUB] After a Redis disconnect/reconnect, the dedicated subscriber could
+#   silently stop receiving on channels that were subscribed before the first
+#   "ready" event (ioredis autoResubscribe edge case), so messages published after
+#   a blip never reached the stream. FIX: handleReconnect explicitly re-subscribes
+#   to every tracked channel; publish logs subscriberCount for diagnosis (section 6).
+# [SSE-LEAK] Only cancel() cleaned up, but a real browser disconnect aborts
+#   req.signal instead of calling cancel(), leaking a Redis subscriber + intervals
+#   on every page reload. FIX: shared cleanup() wired to both cancel() and
+#   req.signal "abort" (section 4).
+
+# =============================================================================
+# FEATURES ADDED (for changelog/reference)
+# =============================================================================
+# [RICH-ATTACHMENTS] Bidirectional file support (image/video/audio/voice/document),
+#   ON BY DEFAULT. Visitor uploads go multipart -> stored on disk (per-session
+#   folder keyed on ChatSession.id) -> relayed to Telegram; agent media is
+#   getFile+downloaded -> stored -> streamed to the visitor. The SSE payload carries
+#   only metadata; bytes are served by an authenticated GET route that authorizes on
+#   the per-conversation visitorId and switches inline vs download disposition.
+#   Storage is fronted by a traversal guard, gated by a server-enforced flag
+#   (NEXT_PUBLIC_LIVE_CHAT_ATTACHMENTS_ENABLED), size-capped (CHAT_MAX_UPLOAD_MB),
+#   and reclaimed on every close path + a housekeeping-cron sweep so no orphaned
+#   files survive. See sections 1,2,3,5,7,8,9,12,13,14. KEY DECISIONS: (1) metadata
+#   on the message row, bytes off-DB; (2) store-before-relay so a Telegram failure
+#   never hides the visitor's own upload (recorded via errorText instead); (3) paths
+#   keyed on the stable session id, never the rotating visitorId; (4) the client
+#   flag is presentational only — the server re-checks the same predicate.

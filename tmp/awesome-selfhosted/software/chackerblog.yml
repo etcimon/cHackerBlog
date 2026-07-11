@@ -1,0 +1,11 @@
+name: cHackerBlog
+website_url: https://github.com/etcimon/chackerblog
+description: Themable blogging platform with WYSIWYG editor, infinite scroll, i18n, and on-demand article translation.
+licenses:
+  - MIT
+platforms:
+  - Nodejs
+  - Docker
+tags:
+  - Blogging Platforms
+source_code_url: https://github.com/etcimon/chackerblog

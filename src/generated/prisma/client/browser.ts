@@ -39,6 +39,23 @@ export type Article = Prisma.ArticleModel
  */
 export type ArticleTranslation = Prisma.ArticleTranslationModel
 /**
+ * Model ChatSession
+ * A live-chat conversation between a site visitor and support (relayed to a
+ * Telegram supergroup forum topic — one topic per session). `visitorId` is an
+ * opaque, per-conversation shared secret minted client-side; it rotates when a
+ * conversation ends, so file storage is keyed on the STABLE `id` instead.
+ */
+export type ChatSession = Prisma.ChatSessionModel
+/**
+ * Model ChatMessage
+ * A single message in a ChatSession. `direction` is "visitor" | "support"
+ * (stored as String for SQLite/PostgreSQL parity — see header). Attachment
+ * metadata lives on the row (one optional file per message); a plain-text
+ * message leaves every attachment* column null. `attachmentPath` is a storage-
+ * root-relative path so the storage root can move without a data migration.
+ */
+export type ChatMessage = Prisma.ChatMessageModel
+/**
  * Model Tag
  * Tags listed at the top of the feed and on each article header.
  */

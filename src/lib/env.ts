@@ -180,6 +180,20 @@ const schema = z.object({
   // the /[lang]/... URL scheme is disabled (404), and the footer language
   // switcher is hidden. Article-level Grok translation is unaffected.
   DISABLE_I18N: boolish.default(false),
+
+  // Live chat (Telegram-relayed). The widget is hidden client-side when
+  // NEXT_PUBLIC_LIVE_CHAT_ENABLED="false". Telegram creds are optional: when any
+  // is missing the relay simply no-ops (messages persist with a delivery-error
+  // badge) and the startup webhook registration is skipped. Note: storage/flag
+  // helpers in lib/chat/storage.ts read process.env directly (at call time) so
+  // they can be mutated per-request/test; these entries are for validation/docs.
+  TELEGRAM_BOT_TOKEN: z.string().optional(),
+  TELEGRAM_SUPPORT_CHAT_ID: z.string().optional(),
+  TELEGRAM_WEBHOOK_URL: z.string().url().optional().or(z.literal("")),
+  TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
+  // Attachment store: directory (relative to cwd) + max single-upload size (MB).
+  CHAT_UPLOAD_DIR: z.string().default("chat-uploads"),
+  CHAT_MAX_UPLOAD_MB: z.coerce.number().int().positive().default(20),
 });
 
 const parsed = schema.safeParse(process.env);

@@ -1,0 +1,2952 @@
+# live-chat-verbose.ddiff
+#
+# VERBOSE doc-diff for the CallTorch Live Chat subsystem (with rich attachments).
+#
+# PURPOSE
+# -------
+# This is the *maximal* companion to `live-chat.ddiff`. Where the standard ddiff
+# paraphrases and elides code bodies (`/* ... */`), this file reproduces the FULL
+# source of every file involved, verbatim, so a coding agent has the complete
+# implementation to port. Each section is preceded by an `# intent:` preface that
+# states the file's responsibility and the load-bearing decisions; the reproduced
+# source keeps its own inline comments. Read `live-chat.ddiff` first for the
+# high-level architecture and the "why"; use THIS file for the exact "what".
+#
+# It is NOT runnable as-is (paths/imports assume the source project). Treat it as
+# a spec: recreate each file at the indicated path, adapting imports to your stack.
+#
+# SOURCE STACK: Next.js 16 App Router, React 19, TypeScript, Prisma, ioredis,
+# Telegram Bot API, Tailwind CSS, FontAwesome, bun:test.
+#
+# FILE MANIFEST (paths are repo-relative)
+# ---------------------------------------
+#   1.  components/LiveChat.tsx                     client widget
+#   2.  app/api/chat/send/route.ts                  visitor -> Telegram (text + upload)
+#   3.  app/api/chat/close/route.ts                 visitor-initiated close + file cleanup
+#   4.  app/api/chat/stream/route.ts                SSE downstream
+#   5.  app/api/chat/telegram/route.ts              inbound webhook (agent replies + media)
+#   6.  app/api/chat/attachments/[id]/route.ts      authenticated attachment byte serving
+#   7.  lib/chat/pubsub.ts                          Redis + in-memory fanout
+#   8.  lib/chat/telegram.ts                        Bot API wrappers + media + webhook reg
+#   9.  lib/chat/storage.ts                         per-session on-disk attachment store
+#   10. lib/chat/db.ts                              Prisma helpers + DTO mappers
+#   11. lib/chat/types.ts                           shared DTO / Telegram / event types
+#   12. instrumentation.ts                          startup webhook registration hook
+#   13. prisma/schema.prisma (chat models)          data model
+#   14. lib/rate-limit.ts (chat keys)               rate-limit buckets
+#   15. app/api/cron/housekeeping/route.ts (chat)   retention sweep
+#   16. .env.example / .gitignore (chat)            config + ignore
+#   17. TESTS: tests/chat.test.ts + tests/chat-attachments.test.ts
+#
+# =============================================================================
+# 1. components/LiveChat.tsx  --  client widget (FULL SOURCE)
+# =============================================================================
+# intent: single "use client" component owning ALL widget state + the EventSource.
+# Visitor identity + open-state live ONLY in component memory (no sessionStorage),
+# so a page refresh deliberately starts a fresh conversation. The attachment
+# picker is gated by NEXT_PUBLIC_LIVE_CHAT_ATTACHMENTS_ENABLED (server re-checks).
+# A send is a JSON body for text, or multipart/form-data when a file is staged.
+# `resetChat` is a STABLE useCallback (reads name/email via refs) so typing in the
+# intake form never re-runs the focus effect and steals the caret.
+
+"use client";
+
+import { useEffect, useRef, useState, useCallback } from "react";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import {
+  faComments,
+  faPaperPlane,
+  faTimes,
+  faCircleExclamation,
+  faSpinner,
+  faHeadset,
+  faPaperclip,
+  faDownload,
+  faFileLines,
+} from "@fortawesome/free-solid-svg-icons";
+import type { ChatMessageDto, ChatSessionDto, ChatAttachmentDto, ChatDirection } from "@/lib/chat/types";
+
+function formatBytes(bytes: number): string {
+  if (!bytes) return "";
+  const units = ["B", "KB", "MB", "GB"];
+  let n = bytes;
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024;
+    i += 1;
+  }
+  return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
+}
+
+// Visitor identity and open state are intentionally held only in component
+// memory and never persisted to sessionStorage/localStorage. A full window
+// refresh therefore discards the in-memory token and resets the widget to a
+// brand-new conversation, which is the desired lifecycle.
+
+export default function LiveChat() {
+  const [isOpen, setIsOpen] = useState(false);
+  const [hasAnimation, setHasAnimation] = useState(false);
+  const [messages, setMessages] = useState<ChatMessageDto[]>([]);
+  const [session, setSession] = useState<ChatSessionDto | null>(null);
+  const [input, setInput] = useState("");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [showForm, setShowForm] = useState(true);
+  const [status, setStatus] = useState<"idle" | "sending" | "error" | "connecting">("idle");
+  const [error, setError] = useState<string | null>(null);
+  const [unread, setUnread] = useState(0);
+  const [attachment, setAttachment] = useState<File | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const sessionRef = useRef<ChatSessionDto | null>(session);
+  // In-memory visitor token; regenerated per browser tab load, cleared on reset.
+  const visitorIdRef = useRef<string>("");
+  // Mirror name/email into refs so resetChat can read the latest values without
+  // listing them as dependencies (which previously destabilized the callback).
+  const nameRef = useRef(name);
+  const emailRef = useRef(email);
+
+  useEffect(() => {
+    nameRef.current = name;
+    emailRef.current = email;
+  }, [name, email]);
+
+  function ensureVisitorId(): string {
+    if (!visitorIdRef.current) {
+      visitorIdRef.current = crypto.randomUUID();
+    }
+    return visitorIdRef.current;
+  }
+
+  // Stable identity (empty dep array): reads name/email via refs so it does not
+  // re-create on every keystroke and cannot retrigger the focus effect below.
+  const resetChat = useCallback((clearMessages = false) => {
+    visitorIdRef.current = "";
+    setSession(null);
+    setShowForm(!nameRef.current.trim() || !emailRef.current.trim());
+    setError(null);
+    if (clearMessages) {
+      setMessages([]);
+    }
+  }, []);
+
+  const [showCloseModal, setShowCloseModal] = useState(false);
+
+  const greeting = process.env.NEXT_PUBLIC_LIVE_CHAT_GREETING || "Hi there! How can we help you today?";
+  const enabled = process.env.NEXT_PUBLIC_LIVE_CHAT_ENABLED !== "false";
+  // Visitor-side attachment uploads can be disabled independently of the widget.
+  // The server enforces the same flag, so this only controls picker visibility.
+  const attachmentsEnabled = process.env.NEXT_PUBLIC_LIVE_CHAT_ATTACHMENTS_ENABLED !== "false";
+
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, []);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, scrollToBottom]);
+
+  // Open/close animation flag
+  useEffect(() => {
+    if (isOpen) {
+      setHasAnimation(true);
+    } else {
+      const timer = setTimeout(() => setHasAnimation(false), 300);
+      return () => clearTimeout(timer);
+    }
+  }, [isOpen]);
+
+  // SSE stream
+  useEffect(() => {
+    if (!isOpen || !session?.id || session?.status === "closed") return;
+
+    const visitorId = session.visitorId;
+    setStatus("connecting");
+    const es = new EventSource(`/api/chat/stream?visitorId=${encodeURIComponent(visitorId)}`);
+    eventSourceRef.current = es;
+
+    es.addEventListener("open", () => {
+      setStatus("idle");
+      setError(null);
+    });
+
+    es.addEventListener("history", (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (Array.isArray(data.messages)) {
+          setMessages((prev) => mergeMessages(prev, data.messages));
+        }
+        if (data.session) {
+          setSession((prev) => (prev ? { ...prev, ...data.session } : prev));
+        }
+        if (!isOpen) setUnread((u) => u + 1);
+      } catch (err) {
+        console.error("[LiveChat] history parse error", err);
+      }
+    });
+
+    es.addEventListener("message", (event) => {
+      try {
+        const msg = JSON.parse(event.data) as ChatMessageDto;
+        setMessages((prev) => mergeMessages(prev, [msg]));
+        if (!isOpen) setUnread((u) => u + 1);
+      } catch (err) {
+        console.error("[LiveChat] message parse error", err);
+      }
+    });
+
+    es.addEventListener("status", (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.status === "closed" && data.sessionId) {
+          setSession((prev) => (prev ? { ...prev, status: "closed" } : prev));
+          setError("This chat session has been closed. Close and reopen the chat to start a new conversation.");
+          setStatus("idle");
+          eventSourceRef.current?.close();
+          visitorIdRef.current = "";
+        }
+      } catch (err) {
+        console.error("[LiveChat] status parse error", err);
+      }
+    });
+
+    es.addEventListener("error", () => {
+      // EventSource auto-reconnects; suppress the banner if we closed on purpose.
+      if (sessionRef.current?.status === "closed") {
+        setStatus("idle");
+        return;
+      }
+      setStatus("error");
+      setError("Connection lost. Reconnecting...");
+    });
+
+    return () => {
+      es.close();
+      eventSourceRef.current = null;
+    };
+  }, [isOpen, session?.id]);
+
+  // Focus the relevant field when the chat opens, and reset a closed session
+  // when the widget is hidden. Depends only on `isOpen` (resetChat is stable),
+  // so typing in the name/email inputs no longer re-runs this effect and can
+  // no longer steal focus back to the message textarea.
+  useEffect(() => {
+    if (isOpen) {
+      const timer = setTimeout(() => {
+        (nameInputRef.current ?? inputRef.current)?.focus();
+      }, 300);
+      setUnread(0);
+      return () => clearTimeout(timer);
+    }
+    if (sessionRef.current?.status === "closed") {
+      resetChat(true);
+    }
+  }, [isOpen, resetChat]);
+
+  async function handleSend() {
+    const text = input.trim();
+    if ((!text && !attachment) || status === "sending") return;
+
+    if (session?.status === "closed") {
+      setError("This chat session has been closed. Close and reopen the chat to start a new conversation.");
+      return;
+    }
+
+    setError(null);
+
+    if (showForm && (!name.trim() || !email.trim())) {
+      setError("Please enter your name and email before sending.");
+      return;
+    }
+
+    setStatus("sending");
+
+    const visitorId = session?.visitorId || ensureVisitorId();
+    const pageUrl = typeof window !== "undefined" ? window.location.href : undefined;
+
+    try {
+      let res: Response;
+      if (attachment) {
+        // Multipart upload path. The browser sets the multipart boundary
+        // header automatically, so Content-Type is intentionally omitted.
+        const form = new FormData();
+        form.set("visitorId", visitorId);
+        if (name.trim()) form.set("name", name.trim());
+        if (email.trim()) form.set("email", email.trim());
+        if (text) form.set("message", text);
+        if (pageUrl) form.set("pageUrl", pageUrl);
+        form.set("file", attachment, attachment.name);
+        res = await fetch("/api/chat/send", {
+          method: "POST",
+          body: form,
+          signal: AbortSignal.timeout(30000),
+        });
+      } else {
+        res = await fetch("/api/chat/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            visitorId,
+            name: name.trim() || undefined,
+            email: email.trim() || undefined,
+            message: text,
+            pageUrl,
+          }),
+          signal: AbortSignal.timeout(10000),
+        });
+      }
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to send message");
+      }
+
+      const data = await res.json();
+      if (data.session) {
+        setSession(data.session);
+        visitorIdRef.current = data.visitorId;
+      }
+      if (Array.isArray(data.messages)) {
+        setMessages((prev) => mergeMessages(prev, data.messages));
+      }
+      setInput("");
+      setAttachment(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      if (showForm) setShowForm(false);
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("closed")) {
+        resetChat(true);
+        setError("This chat session has been closed. Send a new message to start a fresh chat.");
+      } else {
+        setError(formatSendError(err));
+      }
+    } finally {
+      setStatus("idle");
+    }
+  }
+
+  function formatSendError(err: unknown): string {
+    if (err instanceof Error) {
+      if (err.name === "AbortError") {
+        return "Request timed out. Please check your connection and try again.";
+      }
+      if (err.name === "TypeError" || err.message.includes("Failed to fetch") || err.message.includes("NetworkError")) {
+        return "Network error. Please check your connection and try again.";
+      }
+      return err.message;
+    }
+    return "Failed to send message. Please try again.";
+  }
+
+  function handleClose() {
+    if (session?.status === "closed" || !session?.id) {
+      if (session?.status === "closed") {
+        resetChat(true);
+      }
+      setIsOpen(false);
+      return;
+    }
+    setShowCloseModal(true);
+  }
+
+  function handleCloseCancel() {
+    setShowCloseModal(false);
+    setIsOpen(false);
+  }
+
+  async function closeSession() {
+    if (!session?.visitorId) return;
+    setStatus("sending");
+    try {
+      const res = await fetch("/api/chat/close", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visitorId: session.visitorId }),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to close session");
+      }
+
+      const data = await res.json();
+      if (data.session) {
+        setSession(data.session);
+      }
+      visitorIdRef.current = "";
+      setMessages([]);
+      setError(null);
+      setShowCloseModal(false);
+      setIsOpen(false);
+    } catch (err) {
+      setError(formatSendError(err));
+      setShowCloseModal(false);
+    } finally {
+      setStatus("idle");
+    }
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  }
+
+  if (!enabled) return null;
+
+  return (
+    <div className="fixed bottom-4 right-4 z-50 flex flex-col items-end gap-3" aria-label="Live chat">
+      {/* Chat panel */}
+      {(isOpen || hasAnimation) && (
+        <div
+          className={[
+            "relative w-80 sm:w-96 max-h-[70vh] bg-white rounded-2xl shadow-2xl",
+            "border border-gray-200 flex flex-col overflow-hidden",
+            "transition-all duration-300 ease-out origin-bottom-right",
+            isOpen
+              ? "opacity-100 translate-y-0 scale-100 pointer-events-auto"
+              : "opacity-0 translate-y-4 scale-95 pointer-events-none",
+          ].join(" ")}
+        >
+          {/* Header */}
+          <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-4 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <FontAwesomeIcon icon={faHeadset} className="text-lg" />
+              <div>
+                <h3 className="font-semibold text-sm">Live Support</h3>
+                <p className="text-xs text-blue-100">We typically reply in minutes</p>
+              </div>
+            </div>
+            <button
+              onClick={handleClose}
+              className="text-white/80 hover:text-white transition-colors p-1 rounded-full hover:bg-white/10"
+              aria-label="Close chat"
+            >
+              <FontAwesomeIcon icon={faTimes} />
+            </button>
+          </div>
+
+          {/* Messages */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
+            {messages.length === 0 && showForm && (
+              <div className="text-sm text-gray-600 bg-white p-3 rounded-xl shadow-sm border border-gray-100">
+                {greeting}
+              </div>
+            )}
+
+            {messages.map((msg, idx) => (
+              <div
+                key={msg.id}
+                className={[
+                  "flex flex-col max-w-[85%] animate-fade-in-up",
+                  msg.direction === "visitor" ? "ml-auto items-end" : "items-start",
+                  "transition-all duration-300",
+                ].join(" ")}
+                style={{ animationDelay: `${idx * 40}ms` }}
+              >
+                <div
+                  className={[
+                    "px-3 py-2 rounded-2xl text-sm shadow-sm",
+                    msg.direction === "visitor"
+                      ? "bg-blue-600 text-white rounded-br-md"
+                      : "bg-white text-gray-900 border border-gray-100 rounded-bl-md",
+                    msg.errorText ? "border-red-300" : "",
+                  ].join(" ")}
+                >
+                  {msg.attachment && session?.visitorId && (
+                    <ChatAttachment
+                      attachment={msg.attachment}
+                      messageId={msg.id}
+                      visitorId={session.visitorId}
+                      direction={msg.direction}
+                    />
+                  )}
+                  {msg.text && (
+                    <div className={msg.attachment ? "mt-1.5 whitespace-pre-wrap break-words" : "whitespace-pre-wrap break-words"}>
+                      {msg.text}
+                    </div>
+                  )}
+                </div>
+                {msg.errorText && (
+                  <span className="text-[10px] text-red-500 mt-1 flex items-center gap-1">
+                    <FontAwesomeIcon icon={faCircleExclamation} />
+                    {msg.errorText}
+                  </span>
+                )}
+                <span className="text-[10px] text-gray-400 mt-1">
+                  {formatTime(msg.createdAt)}
+                </span>
+              </div>
+            ))}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Name/Email form for first-time visitors */}
+          {showForm && messages.length === 0 && (
+            <div className="p-4 bg-white border-t border-gray-100 space-y-2">
+              <input
+                type="text"
+                placeholder="Your name"
+                ref={nameInputRef}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 bg-white text-black placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-shadow"
+              />
+              <input
+                type="email"
+                placeholder="Your email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 bg-white text-black placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-shadow"
+              />
+            </div>
+          )}
+
+          {/* Input */}
+          <div className="p-3 bg-white border-t border-gray-100">
+            {error && (
+              <div className="mb-2 text-xs text-red-600 bg-red-50 px-2 py-1 rounded-lg flex items-center gap-1">
+                <FontAwesomeIcon icon={faCircleExclamation} />
+                {error}
+              </div>
+            )}
+            {attachment && (
+              <div className="mb-2 flex items-center justify-between gap-2 text-xs bg-blue-50 text-blue-800 px-2 py-1.5 rounded-lg">
+                <span className="flex items-center gap-1.5 truncate">
+                  <FontAwesomeIcon icon={faFileLines} />
+                  <span className="truncate">{attachment.name}</span>
+                  <span className="text-blue-500 shrink-0">({formatBytes(attachment.size)})</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAttachment(null);
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                  }}
+                  className="text-blue-500 hover:text-blue-700 shrink-0"
+                  aria-label="Remove attachment"
+                >
+                  <FontAwesomeIcon icon={faTimes} />
+                </button>
+              </div>
+            )}
+            <div className="flex items-end gap-2">
+              {attachmentsEnabled && (
+                <>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0] ?? null;
+                      setAttachment(f);
+                      setError(null);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={session?.status === "closed" || status === "sending"}
+                    className="p-2.5 rounded-full text-gray-500 hover:text-blue-600 hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    aria-label="Attach a file"
+                  >
+                    <FontAwesomeIcon icon={faPaperclip} />
+                  </button>
+                </>
+              )}
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                rows={1}
+                placeholder={session?.status === "closed" ? "Chat closed" : "Type a message..."}
+                disabled={session?.status === "closed"}
+                className="flex-1 resize-none max-h-32 min-h-[2.5rem] px-3 py-2 text-sm rounded-xl border border-gray-200 bg-white text-black placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-shadow disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+              <button
+                onClick={handleSend}
+                disabled={session?.status === "closed" || status === "sending" || (!input.trim() && !attachment)}
+                className="p-2.5 rounded-full bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:scale-105 active:scale-95"
+                aria-label="Send message"
+              >
+                {status === "sending" ? (
+                  <FontAwesomeIcon icon={faSpinner} spin />
+                ) : (
+                  <FontAwesomeIcon icon={faPaperPlane} />
+                )}
+              </button>
+            </div>
+          </div>
+
+          {showCloseModal && (
+            <div className="absolute inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+              <div className="bg-white rounded-xl shadow-xl p-5 w-full max-w-sm text-center">
+                <h4 className="font-semibold text-gray-900 mb-2">Close this chat?</h4>
+                <p className="text-sm text-gray-600 mb-5">
+                  Are you sure you want to close this session? You can start a new chat later.
+                </p>
+                <div className="flex gap-3 justify-center">
+                  <button
+                    onClick={closeSession}
+                    disabled={status === "sending"}
+                    className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50"
+                  >
+                    Yes, close
+                  </button>
+                  <button
+                    onClick={handleCloseCancel}
+                    className="px-4 py-2 rounded-lg bg-gray-100 text-gray-700 text-sm font-medium hover:bg-gray-200"
+                  >
+                    No, just hide
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Floating bubble: while open it routes through handleClose so an active
+          session prompts the close-confirmation modal instead of silently
+          discarding the panel. */}
+      <button
+        onClick={() => (isOpen ? handleClose() : setIsOpen(true))}
+        className={[
+          "group relative w-14 h-14 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-600/30",
+          "flex items-center justify-center transition-all duration-300 hover:scale-110 hover:shadow-xl hover:shadow-blue-600/40",
+          "focus:outline-none focus:ring-4 focus:ring-blue-500/30",
+        ].join(" ")}
+        aria-label={isOpen ? "Close chat" : "Open chat"}
+      >
+        <FontAwesomeIcon icon={isOpen ? faTimes : faComments} className="text-2xl" />
+        {!isOpen && unread > 0 && (
+          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center border-2 border-white animate-bounce">
+            {unread}
+          </span>
+        )}
+      </button>
+    </div>
+  );
+}
+
+// Merge incoming into existing by id (Map dedupe) then sort ascending by
+// createdAt so history + live events converge to one ordered list.
+function mergeMessages(existing: ChatMessageDto[], incoming: ChatMessageDto[]): ChatMessageDto[] {
+  const byId = new Map(existing.map((m) => [m.id, m]));
+  for (const m of incoming) {
+    byId.set(m.id, m);
+  }
+  return Array.from(byId.values()).sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+  );
+}
+
+function formatTime(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+// Renders a message attachment. Images/videos/audio are shown inline via the
+// authenticated attachment endpoint; documents are shown as a download chip.
+// It never embeds bytes: it builds the /api/chat/attachments/<id>?visitorId=...
+// URL (visitorId is the per-conversation secret the server authorizes on).
+function ChatAttachment({
+  attachment,
+  messageId,
+  visitorId,
+  direction,
+}: {
+  attachment: ChatAttachmentDto;
+  messageId: string;
+  visitorId: string;
+  direction: ChatDirection;
+}) {
+  const base = `/api/chat/attachments/${encodeURIComponent(messageId)}?visitorId=${encodeURIComponent(visitorId)}`;
+  const downloadUrl = `${base}&download=1`;
+
+  if (attachment.type === "image") {
+    return (
+      <a href={base} target="_blank" rel="noopener noreferrer" className="block">
+        <img
+          src={base}
+          alt={attachment.name}
+          className="max-w-full max-h-56 rounded-lg object-contain bg-black/5"
+          loading="lazy"
+        />
+      </a>
+    );
+  }
+
+  if (attachment.type === "video") {
+    return (
+      <video src={base} controls className="max-w-full max-h-56 rounded-lg bg-black/5">
+        <track kind="captions" />
+      </video>
+    );
+  }
+
+  if (attachment.type === "audio" || attachment.type === "voice") {
+    return <audio src={base} controls className="max-w-full" />;
+  }
+
+  const chipClass =
+    direction === "visitor"
+      ? "bg-blue-500/40 hover:bg-blue-500/60 text-white"
+      : "bg-gray-100 hover:bg-gray-200 text-gray-800";
+  return (
+    <a
+      href={downloadUrl}
+      download={attachment.name}
+      className={`flex items-center gap-2 px-2.5 py-2 rounded-lg transition-colors ${chipClass}`}
+    >
+      <FontAwesomeIcon icon={faFileLines} className="text-base shrink-0" />
+      <span className="flex flex-col min-w-0">
+        <span className="truncate text-xs font-medium">{attachment.name}</span>
+        {attachment.size > 0 && (
+          <span className="text-[10px] opacity-80">{formatBytes(attachment.size)}</span>
+        )}
+      </span>
+      <FontAwesomeIcon icon={faDownload} className="ml-auto shrink-0" />
+    </a>
+  );
+}
+
+# =============================================================================
+# 2. app/api/chat/send/route.ts  --  visitor -> Telegram relay (FULL SOURCE)
+# =============================================================================
+# intent: ONE POST route, TWO content types. multipart/form-data => handleUpload
+# (a file + optional caption); anything else => handleText (JSON message). Shared
+# helpers findOrCreateSession/ensureTopic keep both paths consistent. The upload
+# path enforces the attachments flag SERVER-SIDE, size-limits the file, STORES the
+# bytes locally BEFORE relaying to Telegram (so the visitor always sees their own
+# upload), and records a Telegram delivery failure on the persisted message via
+# errorText rather than failing the request.
+
+import { NextRequest } from "next/server";
+import { z } from "zod";
+import { createTracer } from "@/lib/trace";
+import { applyRouteLimit } from "@/lib/rate-limit";
+import { apiError, ErrorCode } from "@/lib/api-error";
+import { getClientIp } from "@/lib/ip-geo";
+import { randomUUID } from "crypto";
+import { ChatMessageDirection } from "@/generated/prisma/client";
+import type { ChatSession } from "@/generated/prisma/client";
+import {
+  findChatSessionByVisitorId,
+  createChatSession,
+  updateChatSession,
+  updateChatSessionThread,
+  createChatMessage,
+  listChatMessages,
+  toMessageDto,
+  toSessionDto,
+} from "@/lib/chat/db";
+import {
+  createForumTopic,
+  sendMessageToTopic,
+  sendMediaToTopic,
+  formatVisitorContext,
+  formatVisitorReply,
+  ChatTelegramError,
+} from "@/lib/chat/telegram";
+import {
+  saveChatFile,
+  maxUploadBytes,
+  clientAttachmentsEnabled,
+  attachmentTypeFromMime,
+} from "@/lib/chat/storage";
+import { publishChatEvent } from "@/lib/chat/pubsub";
+
+const trace = createTracer("chat-send");
+
+export const dynamic = "force-dynamic";
+
+const sendSchema = z.object({
+  visitorId: z.string().min(1).max(100).optional(),
+  name: z.string().max(100).optional(),
+  email: z.string().email().max(255).optional().or(z.literal("")),
+  message: z.string().min(1).max(2000),
+  pageUrl: z.string().url().max(1000).optional().or(z.literal("")),
+});
+
+interface VisitorContext {
+  visitorId?: string;
+  name?: string;
+  email?: string;
+  pageUrl?: string;
+  ip?: string;
+  userAgent?: string;
+}
+
+/** Find an existing session by visitor id, or create one, merging new context. */
+async function findOrCreateSession(ctx: VisitorContext): Promise<ChatSession> {
+  let session = ctx.visitorId ? await findChatSessionByVisitorId(ctx.visitorId) : null;
+  if (!session) {
+    session = await createChatSession({
+      visitorId: ctx.visitorId || randomUUID(),
+      name: ctx.name,
+      email: ctx.email,
+      ip: ctx.ip,
+      pageUrl: ctx.pageUrl,
+      userAgent: ctx.userAgent,
+    });
+    trace.info("created new chat session on send", { sessionId: session.id, visitorId: session.visitorId });
+  } else if (ctx.name || ctx.email || ctx.pageUrl) {
+    session = await updateChatSession(session.id, {
+      name: ctx.name ?? session.name ?? undefined,
+      email: ctx.email ?? session.email ?? undefined,
+      pageUrl: ctx.pageUrl ?? session.pageUrl ?? undefined,
+    });
+  }
+  return session;
+}
+
+/** Ensure the session has a Telegram forum topic. Throws ChatTelegramError on failure. */
+async function ensureTopic(session: ChatSession): Promise<ChatSession> {
+  if (session.telegramThreadId) return session;
+  const topic = await createForumTopic(`Chat: ${session.name ?? session.visitorId.slice(0, 8)}`);
+  return updateChatSessionThread(session.id, process.env.TELEGRAM_SUPPORT_CHAT_ID!, topic.message_thread_id);
+}
+
+function sessionResponse(session: ChatSession, messages: unknown[]) {
+  return Response.json({
+    session: toSessionDto(session),
+    visitorId: session.visitorId,
+    messages,
+  });
+}
+
+export async function POST(req: NextRequest) {
+  const blocked = await applyRouteLimit(req, "chat.send");
+  if (blocked) return blocked;
+
+  const contentType = req.headers.get("content-type") ?? "";
+  try {
+    if (contentType.includes("multipart/form-data")) {
+      return await handleUpload(req);
+    }
+    return await handleText(req);
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    if (error instanceof SyntaxError) {
+      trace.error("send chat request body parse error", { error: error.message });
+      return apiError({
+        code: ErrorCode.VALIDATION,
+        message: "Invalid request body. Please check your input and try again.",
+      });
+    }
+    trace.error("send chat unhandled error", {
+      errorType: error.name,
+      errorMessage: error.message,
+      stack: error.stack,
+    });
+    return apiError({
+      code: ErrorCode.INTERNAL,
+      message: "Failed to send message. Please try again later.",
+    });
+  }
+}
+
+async function handleText(req: NextRequest): Promise<Response> {
+  const body = await req.json();
+  const parsed = sendSchema.safeParse(body);
+  if (!parsed.success) {
+    trace.error("send chat invalid payload", { issues: parsed.error.issues });
+    return apiError({
+      code: ErrorCode.VALIDATION,
+      message: "Invalid message payload",
+      details: parsed.error.flatten(),
+    });
+  }
+
+  const { visitorId, name, email, message, pageUrl } = parsed.data;
+  const ctx: VisitorContext = {
+    visitorId,
+    name,
+    email: email || undefined,
+    pageUrl: pageUrl || undefined,
+    ip: getClientIp(req) ?? undefined,
+    userAgent: req.headers.get("user-agent") ?? undefined,
+  };
+
+  let session = await findOrCreateSession(ctx);
+  if (session.status === "closed") {
+    return apiError({ code: ErrorCode.VALIDATION, message: "This chat session has been closed." });
+  }
+
+  // Create a Telegram topic if not already created
+  const hadTopic = Boolean(session.telegramThreadId);
+  if (!hadTopic) {
+    try {
+      session = await ensureTopic(session);
+    } catch (err) {
+      const tgErr = err instanceof ChatTelegramError ? err : null;
+      trace.error("failed to create telegram topic on send", {
+        sessionId: session.id,
+        errorType: (err as Error)?.name,
+        error: String(err),
+        telegramCode: tgErr?.telegramCode,
+        telegramErrorCode: tgErr?.code,
+      });
+      const dbMessage = await createChatMessage({
+        chatSessionId: session.id,
+        direction: ChatMessageDirection.visitor,
+        text: message,
+        errorText: tgErr
+          ? `Unable to reach Telegram support: ${tgErr.message}`
+          : "Unable to reach Telegram support. Please try again.",
+      });
+      await publishChatEvent(session.id, {
+        type: "message",
+        sessionId: session.id,
+        message: toMessageDto(dbMessage),
+      });
+      return apiError({
+        code: ErrorCode.PROVIDER_ERROR,
+        message: tgErr
+          ? `Unable to reach Telegram support: ${tgErr.message}`
+          : "Unable to reach Telegram support. Your message is saved and we will retry.",
+        details: {
+          messageId: dbMessage.id,
+          telegramCode: tgErr?.telegramCode,
+          telegramErrorCode: tgErr?.code,
+        },
+      });
+    }
+  }
+
+  // Send to Telegram. The very first message carries the visitor context header.
+  const telegramText = hadTopic
+    ? formatVisitorReply(message)
+    : formatVisitorContext(message, {
+        name: session.name,
+        email: session.email,
+        pageUrl: session.pageUrl,
+        ip: session.ip,
+        countryCode: session.countryCode,
+        visitorId: session.visitorId,
+      });
+
+  let telegramMessageId: number | undefined;
+  let sendError: ChatTelegramError | null = null;
+  try {
+    const telegramMessage = await sendMessageToTopic(telegramText, session.telegramThreadId!);
+    telegramMessageId = telegramMessage.message_id;
+  } catch (err) {
+    sendError = err instanceof ChatTelegramError ? err : null;
+    trace.error("failed to send visitor message to telegram", {
+      sessionId: session.id,
+      threadId: session.telegramThreadId,
+      error: String(err),
+      telegramCode: sendError?.telegramCode,
+    });
+  }
+
+  const dbMessage = await createChatMessage({
+    chatSessionId: session.id,
+    direction: ChatMessageDirection.visitor,
+    text: message,
+    telegramMessageId,
+    errorText: telegramMessageId
+      ? undefined
+      : sendError
+        ? `Failed to deliver to Telegram: ${sendError.message}`
+        : "Failed to deliver to Telegram",
+  });
+
+  await publishChatEvent(session.id, {
+    type: "message",
+    sessionId: session.id,
+    message: toMessageDto(dbMessage),
+  });
+
+  trace.info("visitor message sent and broadcast", { sessionId: session.id, messageId: dbMessage.id, telegramMessageId });
+
+  return sessionResponse(session, (await listChatMessages(session.id)).map(toMessageDto));
+}
+
+const uploadFieldsSchema = z.object({
+  visitorId: z.string().min(1).max(100).optional(),
+  name: z.string().max(100).optional(),
+  email: z.string().email().max(255).optional().or(z.literal("")),
+  message: z.string().max(2000).optional().or(z.literal("")),
+  pageUrl: z.string().url().max(1000).optional().or(z.literal("")),
+});
+
+async function handleUpload(req: NextRequest): Promise<Response> {
+  // Server-side enforcement of the attachment kill-switch. The NEXT_PUBLIC_*
+  // flag only hides the picker in the client bundle; because that value is
+  // forgeable, the same predicate is re-checked here so disabling attachments
+  // is a real control rather than a cosmetic one.
+  if (!clientAttachmentsEnabled()) {
+    return apiError({ code: ErrorCode.FORBIDDEN, message: "Attachments are disabled." });
+  }
+
+  const form = await req.formData();
+  const fields = uploadFieldsSchema.safeParse({
+    visitorId: form.get("visitorId") ?? undefined,
+    name: form.get("name") ?? undefined,
+    email: form.get("email") ?? undefined,
+    message: form.get("message") ?? undefined,
+    pageUrl: form.get("pageUrl") ?? undefined,
+  });
+  if (!fields.success) {
+    return apiError({ code: ErrorCode.VALIDATION, message: "Invalid upload payload", details: fields.error.flatten() });
+  }
+
+  const file = form.get("file");
+  if (!(file instanceof File)) {
+    return apiError({ code: ErrorCode.VALIDATION, message: "No file provided." });
+  }
+  if (file.size === 0) {
+    return apiError({ code: ErrorCode.VALIDATION, message: "The uploaded file is empty." });
+  }
+  if (file.size > maxUploadBytes()) {
+    return apiError({
+      code: ErrorCode.VALIDATION,
+      message: `File exceeds the maximum size of ${Math.round(maxUploadBytes() / (1024 * 1024))} MB.`,
+    });
+  }
+
+  const { visitorId, name, email, message, pageUrl } = fields.data;
+  const caption = (message || "").trim();
+  const ctx: VisitorContext = {
+    visitorId,
+    name,
+    email: email || undefined,
+    pageUrl: pageUrl || undefined,
+    ip: getClientIp(req) ?? undefined,
+    userAgent: req.headers.get("user-agent") ?? undefined,
+  };
+
+  let session = await findOrCreateSession(ctx);
+  if (session.status === "closed") {
+    return apiError({ code: ErrorCode.VALIDATION, message: "This chat session has been closed." });
+  }
+
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const mime = file.type || "application/octet-stream";
+  const attachmentType = attachmentTypeFromMime(mime);
+  const fileName = file.name || `upload-${Date.now()}`;
+
+  // Store locally first so the visitor can always see their own upload, even if
+  // Telegram delivery subsequently fails.
+  const storedPath = await saveChatFile(session.id, fileName, bytes);
+
+  // Ensure a Telegram topic, then relay the file. Both are best-effort: a
+  // failure is recorded on the persisted message via errorText.
+  let sendError: ChatTelegramError | null = null;
+  let telegramMessageId: number | undefined;
+  try {
+    session = await ensureTopic(session);
+    const telegramMessage = await sendMediaToTopic(session.telegramThreadId!, {
+      type: attachmentType,
+      data: bytes,
+      fileName,
+      mime,
+      caption: caption || undefined,
+    });
+    telegramMessageId = telegramMessage.message_id;
+  } catch (err) {
+    sendError = err instanceof ChatTelegramError ? err : null;
+    trace.error("failed to relay visitor attachment to telegram", {
+      sessionId: session.id,
+      error: String(err),
+      telegramCode: sendError?.telegramCode,
+    });
+  }
+
+  const dbMessage = await createChatMessage({
+    chatSessionId: session.id,
+    direction: ChatMessageDirection.visitor,
+    text: caption,
+    telegramMessageId,
+    attachmentType,
+    attachmentName: fileName,
+    attachmentMime: mime,
+    attachmentSize: bytes.byteLength,
+    attachmentPath: storedPath,
+    errorText: telegramMessageId
+      ? undefined
+      : sendError
+        ? `Failed to deliver attachment to Telegram: ${sendError.message}`
+        : "Failed to deliver attachment to Telegram",
+  });
+
+  await publishChatEvent(session.id, {
+    type: "message",
+    sessionId: session.id,
+    message: toMessageDto(dbMessage),
+  });
+
+  trace.info("visitor attachment sent and broadcast", { sessionId: session.id, messageId: dbMessage.id, attachmentType, telegramMessageId });
+
+  return sessionResponse(session, (await listChatMessages(session.id)).map(toMessageDto));
+}
+
+# =============================================================================
+# 3. app/api/chat/close/route.ts  --  visitor-initiated close (FULL SOURCE)
+# =============================================================================
+# intent: idempotent close by visitorId. Already-closed returns unchanged with no
+# re-broadcast. On a real close it deletes the session's stored attachments
+# (best-effort) BEFORE broadcasting status:closed so other tabs/workers tear down.
+
+import { NextRequest } from "next/server";
+import { z } from "zod";
+import { createTracer } from "@/lib/trace";
+import { applyRouteLimit } from "@/lib/rate-limit";
+import { apiError, ErrorCode } from "@/lib/api-error";
+import {
+  closeChatSessionByVisitorId,
+  findChatSessionByVisitorId,
+  toSessionDto,
+} from "@/lib/chat/db";
+import { deleteSessionFiles } from "@/lib/chat/storage";
+import { publishChatEvent } from "@/lib/chat/pubsub";
+
+const trace = createTracer("chat-close");
+
+export const dynamic = "force-dynamic";
+
+const closeSchema = z.object({
+  visitorId: z.string().min(1).max(100),
+});
+
+export async function POST(req: NextRequest) {
+  const blocked = await applyRouteLimit(req, "chat.close");
+  if (blocked) return blocked;
+
+  try {
+    const body = await req.json();
+    const parsed = closeSchema.safeParse(body);
+    if (!parsed.success) {
+      trace.error("close chat invalid payload", { issues: parsed.error.issues });
+      return apiError({
+        code: ErrorCode.VALIDATION,
+        message: "Invalid payload",
+        details: parsed.error.flatten(),
+      });
+    }
+
+    const { visitorId } = parsed.data;
+    const session = await findChatSessionByVisitorId(visitorId);
+    if (!session) {
+      trace.warn("close chat: session not found", { visitorId });
+      return apiError({
+        code: ErrorCode.NOT_FOUND,
+        message: "Session not found",
+      });
+    }
+
+    if (session.status === "closed") {
+      return Response.json({ session: toSessionDto(session) });
+    }
+
+    const updated = await closeChatSessionByVisitorId(visitorId);
+    if (!updated) {
+      return apiError({
+        code: ErrorCode.INTERNAL,
+        message: "Failed to close session",
+      });
+    }
+
+    // Remove all stored attachments for this conversation on close.
+    await deleteSessionFiles(updated.id);
+
+    await publishChatEvent(updated.id, {
+      type: "status",
+      sessionId: updated.id,
+      status: "closed",
+    });
+
+    trace.info("chat session closed by visitor", { sessionId: updated.id, visitorId });
+
+    return Response.json({ session: toSessionDto(updated) });
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    if (error instanceof SyntaxError) {
+      trace.error("close chat request body parse error", { error: error.message });
+      return apiError({
+        code: ErrorCode.VALIDATION,
+        message: "Invalid request body",
+      });
+    }
+    trace.error("close chat unhandled error", {
+      errorType: error.name,
+      errorMessage: error.message,
+      stack: error.stack,
+    });
+    return apiError({
+      code: ErrorCode.INTERNAL,
+      message: "Failed to close session. Please try again later.",
+    });
+  }
+}
+
+# =============================================================================
+# 4. app/api/chat/stream/route.ts  --  SSE downstream (FULL SOURCE)
+# =============================================================================
+# intent: one EventSource per active session. Subscribes to pub/sub BEFORE the
+# first history read (so nothing published in the race window is lost — events
+# arriving pre-history are buffered in pendingEvents and flushed). Falls back to
+# DB polling when pub/sub is unavailable or Redis drops. A SHARED cleanup() is
+# wired to BOTH ReadableStream.cancel() AND req.signal "abort" (a real browser
+# disconnect aborts the signal, not cancel) so the Redis subscriber + intervals
+# never leak. The response headers ("no-transform", "X-Accel-Buffering: no") are
+# the fix for proxies buffering SSE frames until stream end.
+
+import { NextRequest } from "next/server";
+import { createTracer } from "@/lib/trace";
+import { applyRouteLimit } from "@/lib/rate-limit";
+import { findChatSessionByVisitorId, listChatMessages, toMessageDto, toSessionDto } from "@/lib/chat/db";
+import { subscribeChatEvents } from "@/lib/chat/pubsub";
+import type { ChatEvent, ChatMessageDto } from "@/lib/chat/types";
+
+const trace = createTracer("chat-stream");
+
+export const dynamic = "force-dynamic";
+
+const POLL_INTERVAL_MS = 3000;
+const KEEPALIVE_INTERVAL_MS = 15000;
+
+export async function GET(req: NextRequest) {
+  const blocked = await applyRouteLimit(req, "chat.stream");
+  if (blocked) return blocked;
+
+  const visitorId = req.nextUrl.searchParams.get("visitorId");
+  if (!visitorId) {
+    return new Response("visitorId required", { status: 400 });
+  }
+
+  const session = await findChatSessionByVisitorId(visitorId);
+  if (!session) {
+    // No session yet; return an empty stream that can be closed
+    return new Response(":no session\n\n", {
+      status: 200,
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  }
+
+  const encoder = new TextEncoder();
+  let closed = false;
+  let pollInterval: ReturnType<typeof setInterval> | null = null;
+  let keepaliveInterval: ReturnType<typeof setInterval> | null = null;
+  let unsubscribe: (() => void) | null = null;
+
+  const cleanup = () => {
+    if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+    if (keepaliveInterval) { clearInterval(keepaliveInterval); keepaliveInterval = null; }
+    if (unsubscribe) {
+      try {
+        unsubscribe();
+      } catch (err) {
+        trace.error("chat stream cleanup unsubscribe error", { sessionId: session.id, error: String(err) });
+      }
+      unsubscribe = null;
+    }
+    closed = true;
+  };
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      // Release resources when the browser disconnects/closes the EventSource
+      req.signal.addEventListener("abort", cleanup);
+      if (closed) return;
+
+      let lastMessageCount = 0;
+      const historyMessageIds = new Set<string>();
+      let historyLoaded = false;
+      const pendingEvents: ChatEvent[] = [];
+
+      const enqueue = (text: string) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(text));
+        } catch { /* stream closed */ }
+      };
+
+      const sendMessage = (message: ChatMessageDto) => {
+        historyMessageIds.add(message.id);
+        lastMessageCount += 1;
+        enqueue(`event: message\ndata: ${JSON.stringify(message)}\n\n`);
+      };
+
+      const sendStatus = (status: { sessionId: string; status: string }) => {
+        enqueue(`event: status\ndata: ${JSON.stringify(status)}\n\n`);
+      };
+
+      const sendHistory = async () => {
+        try {
+          const messages = await listChatMessages(session.id);
+          if (messages.length > lastMessageCount) {
+            const dto = messages.map(toMessageDto);
+            historyMessageIds.clear();
+            for (const m of dto) historyMessageIds.add(m.id);
+            lastMessageCount = messages.length;
+            enqueue(`event: history\ndata: ${JSON.stringify({ messages: dto, session: toSessionDto(session) })}\n\n`);
+          }
+        } catch (err) {
+          trace.error("chat stream history poll failed", { sessionId: session.id, error: String(err) });
+        }
+      };
+
+      const handleEvent = (event: ChatEvent) => {
+        if (event.type === "message") {
+          if (historyMessageIds.has(event.message.id)) {
+            return;
+          }
+          sendMessage(event.message);
+        } else if (event.type === "status") {
+          sendStatus({ sessionId: event.sessionId, status: event.status });
+        }
+      };
+
+      const eventHandler = (event: ChatEvent) => {
+        if (!historyLoaded) {
+          pendingEvents.push(event);
+          return;
+        }
+        handleEvent(event);
+      };
+
+      const startPolling = () => {
+        if (pollInterval) return;
+        pollInterval = setInterval(() => {
+          sendHistory().catch((err) => {
+            trace.error("chat stream poll error", { sessionId: session.id, error: String(err) });
+          });
+        }, POLL_INTERVAL_MS);
+      };
+
+      const stopPolling = () => {
+        if (!pollInterval) return;
+        clearInterval(pollInterval);
+        pollInterval = null;
+      };
+
+      // Send initial comment so the browser opens the connection
+      enqueue(":ok\n\n");
+
+      // Subscribe to events before fetching history so we don't miss messages
+      // published between the DB query and the subscription.
+      try {
+        unsubscribe = await subscribeChatEvents(session.id, eventHandler, {
+          onDisconnect: startPolling,
+          onReconnect: stopPolling,
+        });
+      } catch (err) {
+        trace.error("chat stream pubsub subscribe failed", { sessionId: session.id, error: String(err) });
+      }
+
+      if (closed) {
+        stopPolling();
+        unsubscribe?.();
+        return;
+      }
+
+      // Fallback DB polling when pub/sub is unavailable or Redis disconnects
+      if (!unsubscribe) {
+        startPolling();
+      }
+
+      await sendHistory();
+      historyLoaded = true;
+
+      // Flush any events received while history was loading
+      for (const event of pendingEvents) {
+        handleEvent(event);
+      }
+      pendingEvents.length = 0;
+
+      if (closed) return;
+
+      // Keep the connection alive
+      keepaliveInterval = setInterval(() => {
+        enqueue(":keepalive\n\n");
+      }, KEEPALIVE_INTERVAL_MS);
+    },
+
+    cancel() {
+      cleanup();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
+
+# =============================================================================
+# 5. app/api/chat/telegram/route.ts  --  inbound webhook (FULL SOURCE)
+# =============================================================================
+# intent: authenticate via the x-telegram-bot-api-secret-token header first;
+# ignore bot echoes; resolve the session by forum thread id else by the replied
+# message's telegramMessageId. Handle /close + forum_topic_closed (close + delete
+# files + broadcast). Handle inbound MEDIA (photo/video/document/audio/voice) by
+# getFile -> download -> store -> persist a support message with attachment
+# metadata; on retrieval failure persist a placeholder with errorText. Plain text
+# replies become support messages. All unknown updates are acked so Telegram
+# stops retrying. (debug() lines mirror the decision tree into the trace log.)
+
+import { NextRequest } from "next/server";
+import { createTracer } from "@/lib/trace";
+import { apiError, ErrorCode } from "@/lib/api-error";
+import { ChatMessageDirection } from "@/generated/prisma/client";
+import {
+  findChatSessionByThreadId,
+  findChatSessionByTelegramMessageId,
+  closeChatSession,
+  createChatMessage,
+  toMessageDto,
+} from "@/lib/chat/db";
+import {
+  validateWebhookSecret,
+  extractUpdateText,
+  extractThreadId,
+  isBotMessage,
+  extractMedia,
+  getTelegramFile,
+  downloadTelegramFile,
+} from "@/lib/chat/telegram";
+import { saveChatFile, deleteSessionFiles } from "@/lib/chat/storage";
+import { publishChatEvent } from "@/lib/chat/pubsub";
+
+const trace = createTracer("chat-telegram-webhook");
+
+export const dynamic = "force-dynamic";
+
+function debug(step: string, payload: Record<string, unknown>) {
+  trace.info(`telegram webhook debug: ${step}`, payload);
+}
+
+export async function GET() {
+  return Response.json({
+    ok: true,
+    scope: "chat-telegram-webhook",
+    note: "Telegram sends POST updates; this route is for health checks only.",
+  });
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const secret = req.headers.get("x-telegram-bot-api-secret-token");
+    if (!validateWebhookSecret(secret)) {
+      trace.error("telegram webhook secret invalid", { secret: secret ? "present" : "missing" });
+      return apiError({ code: ErrorCode.UNAUTHORIZED, message: "Invalid webhook secret" });
+    }
+
+    let update: any;
+    try {
+      update = await req.json();
+    } catch (err) {
+      trace.error("telegram webhook invalid json", { error: String(err) });
+      return apiError({ code: ErrorCode.VALIDATION, message: "Invalid JSON payload" });
+    }
+
+    const { message, text } = extractUpdateText(update);
+    if (!message) {
+      return Response.json({ ok: true });
+    }
+    if (isBotMessage(message)) {
+      return Response.json({ ok: true });
+    }
+
+    const threadId = extractThreadId(message);
+    let session = threadId ? await findChatSessionByThreadId(threadId) : null;
+    if (!session && message.reply_to_message?.message_id) {
+      session = await findChatSessionByTelegramMessageId(message.reply_to_message.message_id);
+    }
+    if (!session) {
+      trace.warn("telegram webhook: no session for thread or reply", {
+        threadId,
+        messageId: message.message_id,
+        replyMessageId: message.reply_to_message?.message_id,
+      });
+      return Response.json({ ok: true });
+    }
+
+    // Close the session when the Telegram forum topic is closed or the agent sends /close
+    if (text?.trim() === "/close" || message.forum_topic_closed) {
+      const updated = await closeChatSession(session.id);
+      if (updated) {
+        // Remove all stored attachments for this conversation now that the
+        // topic is closed. Cleanup is best-effort and must not block the ack.
+        await deleteSessionFiles(session.id);
+        await publishChatEvent(session.id, {
+          type: "status",
+          sessionId: session.id,
+          status: "closed",
+        });
+      }
+      return Response.json({ ok: true });
+    }
+
+    // Handle inbound media (photo/video/document/audio/voice). The bytes are
+    // downloaded from Telegram and stored under the session's folder; the DTO
+    // carries only metadata and the client fetches bytes via the attachment
+    // route. A caption, if present, becomes the message text.
+    const media = extractMedia(message);
+    if (media) {
+      trace.info("telegram webhook inbound media", { sessionId: session.id, type: media.type, fileId: media.fileId, size: media.size });
+      try {
+        const file = await getTelegramFile(media.fileId);
+        if (!file.file_path) {
+          throw new Error("getFile returned no file_path");
+        }
+        const bytes = await downloadTelegramFile(file.file_path);
+        const storedPath = await saveChatFile(session.id, media.fileName, bytes);
+        const dbMessage = await createChatMessage({
+          chatSessionId: session.id,
+          direction: ChatMessageDirection.support,
+          text: media.caption ?? "",
+          telegramMessageId: message.message_id,
+          attachmentType: media.type,
+          attachmentName: media.fileName,
+          attachmentMime: media.mime,
+          attachmentSize: bytes.byteLength,
+          attachmentPath: storedPath,
+        });
+        await publishChatEvent(session.id, {
+          type: "message",
+          sessionId: session.id,
+          message: toMessageDto(dbMessage),
+        });
+      } catch (err) {
+        trace.error("telegram webhook media handling failed", { sessionId: session.id, error: String(err) });
+        // Persist a placeholder so the visitor sees that an attachment failed.
+        const dbMessage = await createChatMessage({
+          chatSessionId: session.id,
+          direction: ChatMessageDirection.support,
+          text: media.caption ?? "",
+          telegramMessageId: message.message_id,
+          errorText: "Attachment could not be retrieved from Telegram.",
+        });
+        await publishChatEvent(session.id, {
+          type: "message",
+          sessionId: session.id,
+          message: toMessageDto(dbMessage),
+        });
+      }
+      return Response.json({ ok: true });
+    }
+
+    if (!text) {
+      return Response.json({ ok: true });
+    }
+
+    const dbMessage = await createChatMessage({
+      chatSessionId: session.id,
+      direction: ChatMessageDirection.support,
+      text,
+      telegramMessageId: message.message_id,
+    });
+
+    await publishChatEvent(session.id, {
+      type: "message",
+      sessionId: session.id,
+      message: toMessageDto(dbMessage),
+    });
+
+    return Response.json({ ok: true });
+  } catch (err) {
+    trace.error("telegram webhook unhandled error", {
+      errorType: err instanceof Error ? err.name : "unknown",
+      error: String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    return apiError({
+      code: ErrorCode.INTERNAL,
+      message: "Webhook processing failed",
+      details: { error: err instanceof Error ? err.name : "unknown" },
+    });
+  }
+}
+
+# =============================================================================
+# 6. app/api/chat/attachments/[id]/route.ts  --  byte serving (FULL SOURCE)
+# =============================================================================
+# intent: authenticated GET. The caller must present the owning session's
+# visitorId (the per-conversation secret) — this prevents enumerating other
+# conversations' files by guessing message ids. readChatFile goes through the
+# storage traversal guard. Documents (or ?download=1) are served as attachments;
+# images/videos/audio inline. nosniff + private cache.
+
+import { NextRequest } from "next/server";
+import { createTracer } from "@/lib/trace";
+import { applyRouteLimit } from "@/lib/rate-limit";
+import { apiError, ErrorCode } from "@/lib/api-error";
+import { getChatMessageWithSession } from "@/lib/chat/db";
+import { readChatFile } from "@/lib/chat/storage";
+
+const trace = createTracer("chat-attachment");
+
+export const dynamic = "force-dynamic";
+
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const blocked = await applyRouteLimit(req, "chat.attachment");
+  if (blocked) return blocked;
+
+  const { id } = await params;
+  const visitorId = req.nextUrl.searchParams.get("visitorId");
+  const forceDownload = req.nextUrl.searchParams.get("download") === "1";
+
+  if (!visitorId) {
+    return apiError({ code: ErrorCode.VALIDATION, message: "visitorId is required" });
+  }
+
+  const message = await getChatMessageWithSession(id);
+  if (!message || !message.attachmentPath) {
+    return apiError({ code: ErrorCode.NOT_FOUND, message: "Attachment not found" });
+  }
+
+  // Authorize: the visitor token must match the owning session.
+  if (message.chatSession.visitorId !== visitorId) {
+    trace.warn("attachment access denied", { messageId: id });
+    return apiError({ code: ErrorCode.FORBIDDEN, message: "You do not have access to this attachment." });
+  }
+
+  let bytes: Buffer;
+  try {
+    bytes = await readChatFile(message.attachmentPath);
+  } catch (err) {
+    trace.error("attachment read failed", { messageId: id, error: String(err) });
+    return apiError({ code: ErrorCode.NOT_FOUND, message: "Attachment file is no longer available." });
+  }
+
+  const mime = message.attachmentMime ?? "application/octet-stream";
+  const name = (message.attachmentName ?? "attachment").replace(/["\\\r\n]/g, "_");
+  const disposition = forceDownload || message.attachmentType === "document" ? "attachment" : "inline";
+
+  return new Response(new Uint8Array(bytes), {
+    status: 200,
+    headers: {
+      "Content-Type": mime,
+      "Content-Length": String(bytes.byteLength),
+      "Content-Disposition": `${disposition}; filename="${name}"`,
+      "Cache-Control": "private, max-age=3600",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+}
+
+# =============================================================================
+# 7. lib/chat/pubsub.ts  --  cross-worker fanout (FULL SOURCE)
+# =============================================================================
+# intent: transport-agnostic chat event bus. In-memory Map fallback for dev /
+# no-Redis; a dedicated ioredis subscriber per stream otherwise. RedisChatPubSub
+# re-subscribes to all tracked channels on "ready" (ioredis autoResubscribe can
+# miss channels subscribed before the first ready) and edge-triggers
+# onDisconnect/onReconnect so the SSE route can toggle DB polling. publishChatEvent
+# is connection-cheap (reuses the shared client) and logs subscriberCount.
+
+import { createTracer } from "@/lib/trace";
+import { ensureRedis } from "@/lib/redis";
+import type { ChatEvent } from "./types";
+
+const trace = createTracer("chat-pubsub");
+
+/** Channel name for a chat session. */
+export function chatChannel(sessionId: string): string {
+  return `chat:${sessionId}`;
+}
+
+/** Abstraction over the chat event broadcast transport. */
+export interface ChatPubSub {
+  subscribe(sessionId: string, handler: (event: ChatEvent) => void): Promise<() => void>;
+  publish(sessionId: string, event: ChatEvent): Promise<void>;
+  close?(): Promise<void>;
+}
+
+// ── In-memory fallback (for dev or when Redis is unavailable) ─────────────
+
+type MemoryHandler = (event: ChatEvent) => void;
+
+const memoryChannels = new Map<string, Set<MemoryHandler>>();
+
+const memory: ChatPubSub = {
+  async subscribe(sessionId, handler) {
+    let set = memoryChannels.get(sessionId);
+    if (!set) {
+      set = new Set();
+      memoryChannels.set(sessionId, set);
+    }
+    set.add(handler);
+    return () => {
+      const s = memoryChannels.get(sessionId);
+      if (s) {
+        s.delete(handler);
+        if (s.size === 0) memoryChannels.delete(sessionId);
+      }
+    };
+  },
+
+  async publish(sessionId, event) {
+    const set = memoryChannels.get(sessionId);
+    if (set) {
+      for (const handler of set) {
+        try {
+          handler(event);
+        } catch (err) {
+          trace.error("memory pubsub handler error", { sessionId, error: String(err) });
+        }
+      }
+    }
+  },
+};
+
+// ── Redis pub/sub implementation ───────────────────────────────────────────
+
+class RedisChatPubSub implements ChatPubSub {
+  private subscriber: NonNullable<Awaited<ReturnType<typeof ensureRedis>>>;
+  private handlers = new Map<string, Set<MemoryHandler>>();
+  private onDisconnect?: () => void;
+  private onReconnect?: () => void;
+  private connected = false;
+  private messageHandler = (channel: string, raw: string) => {
+    const sessionId = channel.startsWith("chat:") ? channel.slice(5) : channel;
+    try {
+      const event = JSON.parse(raw) as ChatEvent;
+      const set = this.handlers.get(sessionId);
+      if (set) {
+        for (const handler of set) {
+          try {
+            handler(event);
+          } catch (err) {
+            trace.error("redis pubsub handler error", { sessionId, error: String(err) });
+          }
+        }
+      } else {
+        trace.warn("redis pubsub no handlers for session", { sessionId, channel });
+      }
+    } catch (err) {
+      trace.error("redis pubsub message parse error", { channel, raw, error: String(err) });
+    }
+  };
+  private handleDisconnect = () => {
+    if (!this.connected) return;
+    this.connected = false;
+    this.onDisconnect?.();
+  };
+  private handleReconnect = () => {
+    if (this.connected) return;
+    this.connected = true;
+    this.onReconnect?.();
+    // ioredis autoResubscribe is on by default, but it can miss channels when
+    // subscriptions were issued before the first ready event. Re-subscribe to
+    // every known handler channel so we do not silently drop messages.
+    const channels = Array.from(this.handlers.keys()).map((sessionId) => chatChannel(sessionId));
+    if (channels.length > 0) {
+      this.subscriber.subscribe(...channels).catch((err) => {
+        trace.error("redis pubsub re-subscribe failed", { channels, error: String(err) });
+      });
+    }
+  };
+
+  constructor(
+    subscriber: NonNullable<Awaited<ReturnType<typeof ensureRedis>>>,
+    options?: { onDisconnect?: () => void; onReconnect?: () => void },
+  ) {
+    this.subscriber = subscriber;
+    this.onDisconnect = options?.onDisconnect;
+    this.onReconnect = options?.onReconnect;
+    this.subscriber.on("message", this.messageHandler);
+    this.subscriber.on("close", this.handleDisconnect);
+    this.subscriber.on("end", this.handleDisconnect);
+    this.subscriber.on("error", this.handleDisconnect);
+    this.subscriber.on("ready", this.handleReconnect);
+  }
+
+  async subscribe(sessionId: string, handler: MemoryHandler): Promise<() => void> {
+    let set = this.handlers.get(sessionId);
+    if (!set) {
+      set = new Set();
+      this.handlers.set(sessionId, set);
+      await this.subscriber.subscribe(chatChannel(sessionId));
+    }
+    set.add(handler);
+
+    return () => {
+      const s = this.handlers.get(sessionId);
+      if (s) {
+        s.delete(handler);
+        if (s.size === 0) {
+          this.handlers.delete(sessionId);
+          this.subscriber.unsubscribe(chatChannel(sessionId)).catch((err) => {
+            trace.error("redis unsubscribe error", { sessionId, error: String(err) });
+          });
+        }
+      }
+    };
+  }
+
+  async publish(sessionId: string, event: ChatEvent): Promise<void> {
+    const redis = await ensureRedis();
+    if (redis) {
+      await redis.publish(chatChannel(sessionId), JSON.stringify(event));
+    }
+  }
+
+  async close(): Promise<void> {
+    this.subscriber.off("message", this.messageHandler);
+    this.subscriber.off("close", this.handleDisconnect);
+    this.subscriber.off("end", this.handleDisconnect);
+    this.subscriber.off("error", this.handleDisconnect);
+    this.subscriber.off("ready", this.handleReconnect);
+    this.handlers.clear();
+    this.subscriber.unsubscribe().catch(() => {});
+    this.subscriber.disconnect();
+  }
+}
+
+// ── Public API ────────────────────────────────────────────────────────────
+
+export async function publishChatEvent(sessionId: string, event: ChatEvent): Promise<void> {
+  try {
+    const redis = await ensureRedis();
+    if (redis) {
+      // redis.publish returns the SUBSCRIBER COUNT; a 0 here is the canonical
+      // symptom of "published before any stream subscribed" (rare race).
+      const count = await redis.publish(chatChannel(sessionId), JSON.stringify(event));
+      trace.info("redis chat publish", { sessionId, channel: chatChannel(sessionId), subscriberCount: count });
+      return;
+    }
+  } catch (err) {
+    trace.error("redis chat publish failed, falling back to memory", { sessionId, error: String(err) });
+  }
+  await memory.publish(sessionId, event);
+}
+
+export async function subscribeChatEvents(
+  sessionId: string,
+  handler: (event: ChatEvent) => void,
+  options?: { onDisconnect?: () => void; onReconnect?: () => void },
+): Promise<() => void> {
+  const redis = await ensureRedis();
+  if (redis) {
+    // A subscribed connection cannot issue normal commands, so create a
+    // DEDICATED subscriber client here and close it on unsubscribe.
+    const subscriber = new (await import("ioredis")).default(
+      process.env.REDIS_URL ?? "redis://127.0.0.1:6379",
+    );
+    const sub = new RedisChatPubSub(subscriber, options);
+    const unsubscribe = await sub.subscribe(sessionId, handler);
+    return () => {
+      unsubscribe();
+      sub.close();
+    };
+  }
+  return memory.subscribe(sessionId, handler);
+}
+
+# =============================================================================
+# 8. lib/chat/telegram.ts  --  Bot API wrappers + media + webhook reg (FULL SOURCE)
+# =============================================================================
+# intent: every outbound Telegram call flows through telegramFetch (10s timeout,
+# ok:false -> ChatTelegramError, network -> TELEGRAM_NETWORK_ERROR). MEDIA:
+# sendMediaToTopic multipart-posts to the right send<Kind> method; getTelegramFile
+# resolves a file_id to a file_path; downloadTelegramFile pulls bytes from the FILE
+# host (a different base URL than the API host); extractMedia normalizes an inbound
+# message's media (picking the largest photo). ensureTelegramWebhook is Redis-
+# coordinated (single-flight lock, config hash, recency) and falls back to a direct
+# delete+set when Redis is down.
+
+import { createTracer } from "@/lib/trace";
+import { ensureRedis } from "@/lib/redis";
+import { createHash } from "node:crypto";
+import {
+  TelegramApiResponse,
+  TelegramForumTopic,
+  TelegramMessage,
+  TelegramUpdate,
+  TelegramFile,
+  TelegramMediaRef,
+  ChatAttachmentType,
+} from "./types";
+
+const trace = createTracer("chat-telegram");
+
+export class ChatTelegramError extends Error {
+  constructor(
+    message: string,
+    public readonly code: string,
+    public readonly telegramCode?: number,
+    cause?: unknown,
+  ) {
+    super(message);
+    this.name = "ChatTelegramError";
+    this.cause = cause;
+  }
+}
+
+/** Safe getter for env variables used by the Telegram integration. */
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new ChatTelegramError(`${name} is not configured`, "TELEGRAM_CONFIG_MISSING");
+  }
+  return value;
+}
+
+function getToken(): string {
+  return requireEnv("TELEGRAM_BOT_TOKEN");
+}
+
+function getSupportChatId(): string {
+  return requireEnv("TELEGRAM_SUPPORT_CHAT_ID");
+}
+
+/** Escape text for Telegram's `parse_mode: "HTML"`. */
+export function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** Base URL for Telegram Bot API. */
+function apiUrl(method: string): string {
+  return `https://api.telegram.org/bot${getToken()}/${method}`;
+}
+
+/** Generic Telegram API call with timeout, error logging, structured errors. */
+async function telegramFetch<T>(method: string, body: Record<string, unknown>): Promise<T> {
+  const url = apiUrl(method);
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10000),
+    });
+    const data = (await res.json()) as TelegramApiResponse<T>;
+    if (!data.ok) {
+      trace.error(`telegram api error`, { method, status: res.status, errorCode: data.error_code, description: data.description });
+      throw new ChatTelegramError(data.description ?? `Telegram ${method} failed`, "TELEGRAM_API_ERROR", data.error_code);
+    }
+    return data.result as T;
+  } catch (err) {
+    if (err instanceof ChatTelegramError) throw err;
+    trace.error(`telegram network error`, { method, error: String(err) });
+    throw new ChatTelegramError(`Telegram network error: ${(err as Error).message}`, "TELEGRAM_NETWORK_ERROR", undefined, err);
+  }
+}
+
+/** Create a new forum topic in the support supergroup (one per chat session). */
+export async function createForumTopic(name: string): Promise<TelegramForumTopic> {
+  const chatId = getSupportChatId();
+  const topic = await telegramFetch<TelegramForumTopic>("createForumTopic", {
+    chat_id: chatId,
+    name: name.slice(0, 128),
+    icon_color: 7322096,
+  });
+  return topic;
+}
+
+/** Send a text message to a specific Telegram forum topic. */
+export async function sendMessageToTopic(
+  text: string,
+  threadId: number,
+  options?: { disableNotification?: boolean },
+): Promise<TelegramMessage> {
+  const chatId = getSupportChatId();
+  return telegramFetch<TelegramMessage>("sendMessage", {
+    chat_id: chatId,
+    message_thread_id: threadId,
+    text: text.slice(0, 4096),
+    parse_mode: "HTML",
+    disable_notification: options?.disableNotification ?? false,
+  });
+}
+
+/** Resolve a Telegram `file_id` to a downloadable `file_path` via getFile. */
+export async function getTelegramFile(fileId: string): Promise<TelegramFile> {
+  return telegramFetch<TelegramFile>("getFile", { file_id: fileId });
+}
+
+/**
+ * Download the bytes for a resolved Telegram `file_path`. Telegram serves file
+ * content from a distinct host: `https://api.telegram.org/file/bot<token>/<path>`.
+ */
+export async function downloadTelegramFile(filePath: string): Promise<Buffer> {
+  const url = `https://api.telegram.org/file/bot${getToken()}/${filePath}`;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
+    if (!res.ok) {
+      throw new ChatTelegramError(`Telegram file download failed (${res.status})`, "TELEGRAM_API_ERROR", res.status);
+    }
+    return Buffer.from(await res.arrayBuffer());
+  } catch (err) {
+    if (err instanceof ChatTelegramError) throw err;
+    throw new ChatTelegramError(`Telegram file download error: ${(err as Error).message}`, "TELEGRAM_NETWORK_ERROR", undefined, err);
+  }
+}
+
+/** Map an attachment kind to the Telegram sendX method and form field name. */
+function mediaMethodFor(type: ChatAttachmentType): { method: string; field: string } {
+  switch (type) {
+    case "image": return { method: "sendPhoto", field: "photo" };
+    case "video": return { method: "sendVideo", field: "video" };
+    case "audio": return { method: "sendAudio", field: "audio" };
+    case "voice": return { method: "sendVoice", field: "voice" };
+    default: return { method: "sendDocument", field: "document" };
+  }
+}
+
+/**
+ * Send a media file to a Telegram forum topic using multipart/form-data. The
+ * caption (if any) is HTML-escaped and rendered with `parse_mode: HTML`.
+ */
+export async function sendMediaToTopic(
+  threadId: number,
+  media: { type: ChatAttachmentType; data: Uint8Array; fileName: string; mime: string; caption?: string },
+): Promise<TelegramMessage> {
+  const chatId = getSupportChatId();
+  const { method, field } = mediaMethodFor(media.type);
+  const url = apiUrl(method);
+
+  const form = new FormData();
+  form.set("chat_id", chatId);
+  form.set("message_thread_id", String(threadId));
+  if (media.caption) {
+    form.set("caption", escapeHtml(media.caption).slice(0, 1024));
+    form.set("parse_mode", "HTML");
+  }
+  form.set(
+    field,
+    new Blob([media.data as Uint8Array<ArrayBuffer>], { type: media.mime || "application/octet-stream" }),
+    media.fileName,
+  );
+
+  try {
+    const res = await fetch(url, { method: "POST", body: form, signal: AbortSignal.timeout(30000) });
+    const dataJson = (await res.json()) as TelegramApiResponse<TelegramMessage>;
+    if (!dataJson.ok) {
+      throw new ChatTelegramError(dataJson.description ?? `Telegram ${method} failed`, "TELEGRAM_API_ERROR", dataJson.error_code);
+    }
+    return dataJson.result as TelegramMessage;
+  } catch (err) {
+    if (err instanceof ChatTelegramError) throw err;
+    throw new ChatTelegramError(`Telegram media send error: ${(err as Error).message}`, "TELEGRAM_NETWORK_ERROR", undefined, err);
+  }
+}
+
+/**
+ * Extract a normalized media reference from an inbound Telegram message, if any.
+ * Photos are represented as an array of sizes; the largest is chosen.
+ */
+export function extractMedia(message: TelegramMessage): TelegramMediaRef | null {
+  const caption = message.caption;
+  if (message.photo && message.photo.length > 0) {
+    const largest = message.photo.reduce((a, b) => ((b.file_size ?? 0) >= (a.file_size ?? 0) ? b : a));
+    return { type: "image", fileId: largest.file_id, fileName: `photo-${largest.file_unique_id}.jpg`, mime: "image/jpeg", size: largest.file_size ?? 0, caption };
+  }
+  if (message.video) {
+    return { type: "video", fileId: message.video.file_id, fileName: message.video.file_name ?? `video-${message.video.file_unique_id}.mp4`, mime: message.video.mime_type ?? "video/mp4", size: message.video.file_size ?? 0, caption };
+  }
+  if (message.document) {
+    return { type: "document", fileId: message.document.file_id, fileName: message.document.file_name ?? `file-${message.document.file_unique_id}`, mime: message.document.mime_type ?? "application/octet-stream", size: message.document.file_size ?? 0, caption };
+  }
+  if (message.audio) {
+    return { type: "audio", fileId: message.audio.file_id, fileName: message.audio.file_name ?? `audio-${message.audio.file_unique_id}.mp3`, mime: message.audio.mime_type ?? "audio/mpeg", size: message.audio.file_size ?? 0, caption };
+  }
+  if (message.voice) {
+    return { type: "voice", fileId: message.voice.file_id, fileName: `voice-${message.voice.file_unique_id}.ogg`, mime: message.voice.mime_type ?? "audio/ogg", size: message.voice.file_size ?? 0, caption };
+  }
+  return null;
+}
+
+export async function setTelegramWebhook(
+  url: string,
+  secretToken: string,
+  allowedUpdates: string[] = ["message", "edited_message"],
+): Promise<boolean> {
+  return telegramFetch<boolean>("setWebhook", { url, secret_token: secretToken, allowed_updates: allowedUpdates });
+}
+
+export async function deleteTelegramWebhook(): Promise<boolean> {
+  return telegramFetch<boolean>("deleteWebhook", {});
+}
+
+/** Validate the secret token sent in Telegram webhook headers. */
+export function validateWebhookSecret(header?: string | null): boolean {
+  const expected = process.env.TELEGRAM_WEBHOOK_SECRET;
+  if (!expected) {
+    trace.warn("TELEGRAM_WEBHOOK_SECRET not set; webhook validation disabled");
+    return true;
+  }
+  if (!header) return false;
+  return header === expected;
+}
+
+/** Prefer explicit message_thread_id, fall back to the replied message's thread. */
+export function extractThreadId(message: TelegramMessage): number | undefined {
+  if (message.message_thread_id) return message.message_thread_id;
+  if (message.reply_to_message?.message_thread_id) return message.reply_to_message.message_thread_id;
+  return undefined;
+}
+
+export function isBotMessage(message: TelegramMessage): boolean {
+  return message.from?.is_bot ?? false;
+}
+
+export function extractUpdateText(update: TelegramUpdate): { message?: TelegramMessage; text?: string } {
+  const message = update.message ?? update.edited_message;
+  if (!message) return {};
+  return { message, text: message.text };
+}
+
+/** Format the visitor's first message for the support topic (context header). */
+export function formatVisitorContext(
+  text: string,
+  context: { name?: string | null; email?: string | null; pageUrl?: string | null; ip?: string | null; countryCode?: string | null; visitorId: string },
+): string {
+  const lines = [
+    "<b>New chat session</b>",
+    `Visitor: ${context.name ? escapeHtml(context.name) : "Anonymous"}`,
+    `Email: ${context.email ? escapeHtml(context.email) : "-"}`,
+    `Page: ${context.pageUrl ? escapeHtml(context.pageUrl) : "-"}`,
+    `IP: ${context.ip ? escapeHtml(context.ip) : "-"} ${context.countryCode ? escapeHtml(context.countryCode) : ""}`.trim(),
+    `Token: <code>${escapeHtml(context.visitorId)}</code>`,
+    "",
+    "<b>Message:</b>",
+    escapeHtml(text),
+  ];
+  return lines.join("\n");
+}
+
+export function formatVisitorReply(text: string): string {
+  return escapeHtml(text);
+}
+
+// ── Redis-tracked startup webhook registration ────────────────────────────
+
+const WEBHOOK_CONFIG_KEY = "chat:webhook:config";
+const WEBHOOK_REGISTERED_KEY = "chat:webhook:registered";
+const WEBHOOK_REGISTERED_AT_KEY = "chat:webhook:registered_at";
+const WEBHOOK_ALLOWED_UPDATES_KEY = "chat:webhook:allowed_updates";
+const WEBHOOK_LOCK_KEY = "chat:webhook:lock";
+const WEBHOOK_LOCK_TTL_MS = 30000;
+const WEBHOOK_REREGISTER_INTERVAL_MS = 30000;
+
+function hashWebhookConfig(url: string, secret: string, allowedUpdates: string): string {
+  return createHash("sha256").update(`${url}\n${secret}\n${allowedUpdates}`).digest("hex");
+}
+
+export async function ensureTelegramWebhook(): Promise<void> {
+  const url = process.env.TELEGRAM_WEBHOOK_URL;
+  const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!url || !secret || !token) {
+    trace.info("telegram webhook auto-registration skipped: missing env");
+    return;
+  }
+
+  const allowedUpdates = ["message", "edited_message"];
+  const currentHash = hashWebhookConfig(url, secret, allowedUpdates.join(","));
+
+  const redis = await ensureRedis();
+  if (!redis) {
+    trace.warn("redis unavailable for webhook tracking; registering directly");
+    await deleteTelegramWebhook().catch(() => {});
+    await setTelegramWebhook(url, secret, allowedUpdates);
+    return;
+  }
+
+  try {
+    const now = Date.now();
+    // Short-lived lock so only one clustered worker registers at a time.
+    const lock = await redis.set(WEBHOOK_LOCK_KEY, String(now), "EX", Math.floor(WEBHOOK_LOCK_TTL_MS / 1000), "NX");
+    if (lock !== "OK") return;
+
+    const [storedHash, registered, registeredAt] = await redis.mget(WEBHOOK_CONFIG_KEY, WEBHOOK_REGISTERED_KEY, WEBHOOK_REGISTERED_AT_KEY);
+    const lastRegisteredAt = registeredAt ? parseInt(registeredAt, 10) : 0;
+    const isRecent = now - lastRegisteredAt < WEBHOOK_REREGISTER_INTERVAL_MS;
+    if (registered === "1" && storedHash === currentHash && isRecent) return;
+    if (storedHash && storedHash !== currentHash) {
+      await deleteTelegramWebhook().catch(() => {});
+    }
+    const result = await setTelegramWebhook(url, secret, allowedUpdates);
+    if (result) {
+      await redis.mset(
+        WEBHOOK_CONFIG_KEY, currentHash,
+        WEBHOOK_REGISTERED_KEY, "1",
+        WEBHOOK_REGISTERED_AT_KEY, String(now),
+        WEBHOOK_ALLOWED_UPDATES_KEY, allowedUpdates.join(","),
+      );
+    } else {
+      await redis.set(WEBHOOK_REGISTERED_KEY, "0");
+    }
+  } catch (err) {
+    try { await redis.set(WEBHOOK_REGISTERED_KEY, "0"); } catch { /* ignore */ }
+    trace.error("telegram webhook auto-registration failed", { error: String(err) });
+  } finally {
+    try { await redis.del(WEBHOOK_LOCK_KEY); } catch { /* ignore */ }
+  }
+}
+
+# =============================================================================
+# 9. lib/chat/storage.ts  --  per-session on-disk attachment store (FULL SOURCE)
+# =============================================================================
+# intent: single source of truth for WHERE bytes live and HOW they are named.
+# Keyed on the STABLE ChatSession.id (never the rotating visitorId). File names
+# are random UUIDs (client name never touches the path); the display name is kept
+# in the DB. resolveStoredPath is the traversal guard every read passes through.
+
+import { createTracer } from "@/lib/trace";
+import { randomUUID } from "node:crypto";
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import type { ChatAttachmentType } from "./types";
+
+const trace = createTracer("chat-storage");
+
+/**
+ * Root directory for conversation attachments. Each chat session gets its own
+ * subfolder keyed on the immutable session id (a cuid), so cleanup is a simple
+ * recursive remove of one directory when the topic closes.
+ * Configurable with `CHAT_UPLOAD_DIR` (default `./chat-uploads`, gitignored).
+ */
+export function chatUploadRoot(): string {
+  const configured = process.env.CHAT_UPLOAD_DIR?.trim();
+  const base = configured && configured.length > 0 ? configured : "chat-uploads";
+  return path.resolve(process.cwd(), base);
+}
+
+/** Maximum upload size in bytes (default 20 MB), from `CHAT_MAX_UPLOAD_MB`. */
+export function maxUploadBytes(): number {
+  const mb = parseInt(process.env.CHAT_MAX_UPLOAD_MB ?? "20", 10);
+  return (Number.isFinite(mb) && mb > 0 ? mb : 20) * 1024 * 1024;
+}
+
+/**
+ * Whether visitor-originated (client-side) attachments are permitted. This is
+ * enforced on the server, not only hinted at in the UI. The same
+ * `NEXT_PUBLIC_*` variable is read on both sides so there is a single source of
+ * truth; the public prefix only means the value is also inlined into the client
+ * bundle for the picker's visibility.
+ */
+export function clientAttachmentsEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_LIVE_CHAT_ATTACHMENTS_ENABLED !== "false";
+}
+
+/** Absolute directory for a session's attachments. */
+export function sessionDir(sessionId: string): string {
+  const safeId = sanitizeSegment(sessionId);
+  return path.join(chatUploadRoot(), safeId);
+}
+
+/** Strip a path segment down to a safe, single-component token. */
+function sanitizeSegment(value: string): string {
+  const base = path.basename(value).replace(/[^a-zA-Z0-9._-]/g, "_");
+  if (!base || base === "." || base === "..") {
+    throw new Error("invalid storage segment");
+  }
+  return base;
+}
+
+/** Produce a safe, unique on-disk file name while preserving the extension. */
+export function safeFileName(originalName: string): string {
+  const ext = path.extname(originalName).slice(0, 16).replace(/[^a-zA-Z0-9.]/g, "");
+  return `${randomUUID()}${ext || ""}`;
+}
+
+/**
+ * Persist attachment bytes under the session folder. Returns the storage path
+ * relative to `chatUploadRoot()` (e.g. `<sessionId>/<uuid>.png`), which is what
+ * is stored in `ChatMessage.attachmentPath`.
+ */
+export async function saveChatFile(
+  sessionId: string,
+  originalName: string,
+  data: Uint8Array,
+): Promise<string> {
+  const dir = sessionDir(sessionId);
+  await fs.mkdir(dir, { recursive: true });
+  const fileName = safeFileName(originalName);
+  const abs = path.join(dir, fileName);
+  await fs.writeFile(abs, data);
+  const relative = path.relative(chatUploadRoot(), abs).split(path.sep).join("/");
+  trace.info("saved chat attachment", { sessionId, relative, bytes: data.byteLength });
+  return relative;
+}
+
+/**
+ * Resolve a stored relative path to an absolute path, guarding against path
+ * traversal (the resolved path must remain inside the upload root).
+ */
+export function resolveStoredPath(relativePath: string): string {
+  const root = chatUploadRoot();
+  const abs = path.resolve(root, relativePath);
+  const rootWithSep = root.endsWith(path.sep) ? root : root + path.sep;
+  if (abs !== root && !abs.startsWith(rootWithSep)) {
+    throw new Error("attachment path escapes storage root");
+  }
+  return abs;
+}
+
+/** Read stored attachment bytes. Throws if the path escapes the root. */
+export async function readChatFile(relativePath: string): Promise<Buffer> {
+  const abs = resolveStoredPath(relativePath);
+  return fs.readFile(abs);
+}
+
+/**
+ * Recursively delete all attachments for a session. Idempotent: a missing
+ * directory is treated as success. Called from every session-close path and
+ * from housekeeping so no orphaned files remain after a conversation ends.
+ */
+export async function deleteSessionFiles(sessionId: string): Promise<void> {
+  try {
+    const dir = sessionDir(sessionId);
+    await fs.rm(dir, { recursive: true, force: true });
+    trace.info("deleted chat attachments for session", { sessionId });
+  } catch (err) {
+    trace.error("deleteSessionFiles failed", { sessionId, error: String(err) });
+  }
+}
+
+/** Map a MIME type to the coarse attachment kind used by the client renderer. */
+export function attachmentTypeFromMime(mime: string): ChatAttachmentType {
+  if (mime.startsWith("image/")) return "image";
+  if (mime.startsWith("video/")) return "video";
+  if (mime.startsWith("audio/")) return "audio";
+  return "document";
+}
+
+# =============================================================================
+# 10. lib/chat/db.ts  --  Prisma helpers + DTO mappers (FULL SOURCE)
+# =============================================================================
+# intent: thin traced wrappers around Prisma. createChatMessage now also persists
+# the optional attachment* fields; getChatMessageWithSession joins the session for
+# the attachment route's authz; toMessageDto emits an `attachment` object (metadata
+# only, never the path) when attachmentType is set.
+
+import prisma from "@/lib/prisma";
+import { createTracer } from "@/lib/trace";
+import { ChatMessageDirection } from "@/generated/prisma/client";
+import type { ChatMessage, ChatSession } from "@/generated/prisma/client";
+
+const trace = createTracer("chat-db");
+
+export interface UpsertChatSessionInput {
+  visitorId: string;
+  name?: string;
+  email?: string;
+  userId?: string;
+  ip?: string;
+  countryCode?: string;
+  pageUrl?: string;
+  userAgent?: string;
+}
+
+export interface CreateChatMessageInput {
+  chatSessionId: string;
+  direction: ChatMessageDirection;
+  text: string;
+  telegramMessageId?: number;
+  errorText?: string;
+  attachmentType?: string;
+  attachmentName?: string;
+  attachmentMime?: string;
+  attachmentSize?: number;
+  attachmentPath?: string;
+}
+
+export async function findChatSessionByVisitorId(visitorId: string): Promise<ChatSession | null> {
+  try {
+    return await prisma.chatSession.findUnique({ where: { visitorId } });
+  } catch (err) {
+    trace.error("findChatSessionByVisitorId failed", { visitorId, error: String(err) });
+    throw err;
+  }
+}
+
+export async function findChatSessionById(id: string): Promise<ChatSession | null> {
+  try {
+    return await prisma.chatSession.findUnique({ where: { id } });
+  } catch (err) {
+    trace.error("findChatSessionById failed", { id, error: String(err) });
+    throw err;
+  }
+}
+
+export async function findChatSessionByThreadId(threadId: number): Promise<ChatSession | null> {
+  try {
+    return await prisma.chatSession.findFirst({ where: { telegramThreadId: threadId } });
+  } catch (err) {
+    trace.error("findChatSessionByThreadId failed", { threadId, error: String(err) });
+    throw err;
+  }
+}
+
+export async function createChatSession(input: UpsertChatSessionInput): Promise<ChatSession> {
+  try {
+    const session = await prisma.chatSession.create({
+      data: {
+        visitorId: input.visitorId,
+        name: input.name,
+        email: input.email,
+        userId: input.userId,
+        ip: input.ip,
+        countryCode: input.countryCode,
+        pageUrl: input.pageUrl,
+        userAgent: input.userAgent,
+      },
+    });
+    return session;
+  } catch (err) {
+    trace.error("createChatSession failed", { visitorId: input.visitorId, error: String(err) });
+    throw err;
+  }
+}
+
+export async function updateChatSession(id: string, input: Partial<UpsertChatSessionInput>): Promise<ChatSession> {
+  try {
+    return await prisma.chatSession.update({
+      where: { id },
+      data: {
+        name: input.name,
+        email: input.email,
+        userId: input.userId,
+        ip: input.ip,
+        countryCode: input.countryCode,
+        pageUrl: input.pageUrl,
+        userAgent: input.userAgent,
+      },
+    });
+  } catch (err) {
+    trace.error("updateChatSession failed", { id, error: String(err) });
+    throw err;
+  }
+}
+
+export async function findChatSessionByTelegramMessageId(telegramMessageId: number): Promise<ChatSession | null> {
+  try {
+    const message = await prisma.chatMessage.findFirst({
+      where: { telegramMessageId },
+      include: { chatSession: true },
+    });
+    return message?.chatSession ?? null;
+  } catch (err) {
+    trace.error("findChatSessionByTelegramMessageId failed", { telegramMessageId, error: String(err) });
+    throw err;
+  }
+}
+
+export async function updateChatSessionThread(id: string, telegramChatId: string, telegramThreadId: number): Promise<ChatSession> {
+  try {
+    return await prisma.chatSession.update({
+      where: { id },
+      data: { telegramChatId, telegramThreadId },
+    });
+  } catch (err) {
+    trace.error("updateChatSessionThread failed", { id, telegramThreadId, error: String(err) });
+    throw err;
+  }
+}
+
+export async function createChatMessage(input: CreateChatMessageInput): Promise<ChatMessage> {
+  try {
+    const message = await prisma.chatMessage.create({
+      data: {
+        chatSessionId: input.chatSessionId,
+        direction: input.direction,
+        text: input.text,
+        telegramMessageId: input.telegramMessageId,
+        errorText: input.errorText,
+        attachmentType: input.attachmentType,
+        attachmentName: input.attachmentName,
+        attachmentMime: input.attachmentMime,
+        attachmentSize: input.attachmentSize,
+        attachmentPath: input.attachmentPath,
+      },
+    });
+    return message;
+  } catch (err) {
+    trace.error("createChatMessage failed", { chatSessionId: input.chatSessionId, direction: input.direction, error: String(err) });
+    throw err;
+  }
+}
+
+export async function listChatMessages(chatSessionId: string): Promise<ChatMessage[]> {
+  try {
+    return await prisma.chatMessage.findMany({
+      where: { chatSessionId },
+      orderBy: { createdAt: "asc" },
+    });
+  } catch (err) {
+    trace.error("listChatMessages failed", { chatSessionId, error: String(err) });
+    throw err;
+  }
+}
+
+/**
+ * Find a chat message together with its owning session. Used by the attachment
+ * download endpoint to authorize access by the session's visitor token.
+ */
+export async function getChatMessageWithSession(
+  id: string,
+): Promise<(ChatMessage & { chatSession: ChatSession }) | null> {
+  try {
+    return await prisma.chatMessage.findUnique({
+      where: { id },
+      include: { chatSession: true },
+    });
+  } catch (err) {
+    trace.error("getChatMessageWithSession failed", { id, error: String(err) });
+    throw err;
+  }
+}
+
+/**
+ * Convert a Prisma ChatMessage to the API DTO. Attachment metadata is included
+ * when present; the raw bytes are served separately via the attachment route.
+ */
+export function toMessageDto(message: ChatMessage) {
+  return {
+    id: message.id,
+    chatSessionId: message.chatSessionId,
+    direction: message.direction as ChatMessageDirection,
+    text: message.text,
+    errorText: message.errorText ?? undefined,
+    attachment: message.attachmentType
+      ? {
+          type: message.attachmentType as "image" | "video" | "document" | "audio" | "voice",
+          name: message.attachmentName ?? "attachment",
+          mime: message.attachmentMime ?? "application/octet-stream",
+          size: message.attachmentSize ?? 0,
+        }
+      : undefined,
+    createdAt: message.createdAt.toISOString(),
+  };
+}
+
+export async function closeChatSession(id: string): Promise<ChatSession | null> {
+  try {
+    const session = await prisma.chatSession.update({
+      where: { id },
+      data: { status: "closed" },
+    });
+    return session;
+  } catch (err) {
+    trace.error("closeChatSession failed", { id, error: String(err) });
+    throw err;
+  }
+}
+
+export async function closeChatSessionByVisitorId(visitorId: string): Promise<ChatSession | null> {
+  try {
+    const session = await prisma.chatSession.findUnique({ where: { visitorId } });
+    if (!session) return null;
+    return await closeChatSession(session.id);
+  } catch (err) {
+    trace.error("closeChatSessionByVisitorId failed", { visitorId, error: String(err) });
+    throw err;
+  }
+}
+
+export function toSessionDto(session: ChatSession) {
+  return {
+    id: session.id,
+    visitorId: session.visitorId,
+    name: session.name ?? undefined,
+    email: session.email ?? undefined,
+    status: session.status,
+    createdAt: session.createdAt.toISOString(),
+    updatedAt: session.updatedAt.toISOString(),
+  };
+}
+
+# =============================================================================
+# 11. lib/chat/types.ts  --  shared contracts (FULL SOURCE)
+# =============================================================================
+# intent: the SSE/DTO layer carries attachment METADATA only (ChatAttachmentDto);
+# ChatMessageDto.text may be "" for attachment-only messages. The Telegram media
+# unions (photo/video/document/audio/voice + caption) and TelegramFile back the
+# inbound path; TelegramMediaRef is extractMedia's normalized output.
+
+export type ChatDirection = "visitor" | "support";
+
+export type ChatAttachmentType = "image" | "video" | "document" | "audio" | "voice";
+
+export interface ChatAttachmentDto {
+  type: ChatAttachmentType;
+  name: string;
+  mime: string;
+  size: number;
+}
+
+export interface ChatMessageDto {
+  id: string;
+  chatSessionId: string;
+  direction: ChatDirection;
+  text: string;
+  errorText?: string;
+  attachment?: ChatAttachmentDto;
+  createdAt: string;
+}
+
+export interface ChatSessionDto {
+  id: string;
+  visitorId: string;
+  name?: string;
+  email?: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChatMessageEvent { type: "message"; message: ChatMessageDto; sessionId: string; }
+export interface ChatStatusEvent { type: "status"; status: string; sessionId: string; }
+export type ChatEvent = ChatMessageEvent | ChatStatusEvent;
+
+export interface TelegramApiResponse<T = unknown> { ok: boolean; result?: T; description?: string; error_code?: number; }
+export interface TelegramForumTopic { message_thread_id: number; name: string; icon_color: number; }
+export interface TelegramPhotoSize { file_id: string; file_unique_id: string; width: number; height: number; file_size?: number; }
+export interface TelegramDocument { file_id: string; file_unique_id: string; file_name?: string; mime_type?: string; file_size?: number; }
+export interface TelegramVideo { file_id: string; file_unique_id: string; width: number; height: number; duration: number; file_name?: string; mime_type?: string; file_size?: number; }
+export interface TelegramAudio { file_id: string; file_unique_id: string; duration: number; file_name?: string; mime_type?: string; file_size?: number; }
+export interface TelegramFile { file_id: string; file_unique_id: string; file_size?: number; file_path?: string; }
+
+export interface TelegramMessage {
+  message_id: number;
+  message_thread_id?: number;
+  chat: { id: number; type: string };
+  from?: { id: number; is_bot: boolean; username?: string };
+  date: number;
+  text?: string;
+  caption?: string;
+  photo?: TelegramPhotoSize[];
+  document?: TelegramDocument;
+  video?: TelegramVideo;
+  audio?: TelegramAudio;
+  voice?: TelegramAudio;
+  reply_to_message?: { message_id: number; message_thread_id?: number; text?: string };
+  forum_topic_closed?: Record<string, never>;
+  forum_topic_reopened?: Record<string, never>;
+}
+
+export interface TelegramMediaRef {
+  type: ChatAttachmentType;
+  fileId: string;
+  fileName: string;
+  mime: string;
+  size: number;
+  caption?: string;
+}
+
+export interface TelegramUpdate { update_id: number; message?: TelegramMessage; edited_message?: TelegramMessage; }
+
+export interface LiveChatConfig { enabled: boolean; greeting: string; botName?: string; }
+
+# =============================================================================
+# 12. instrumentation.ts  --  Next.js server startup hook (FULL SOURCE)
+# =============================================================================
+# intent: Next calls register() once on server boot. Only on the Node.js runtime
+# (not edge) dynamically import the telegram lib and register the webhook; swallow
+# errors so a webhook failure never blocks startup.
+
+export function register() {
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    import("@/lib/chat/telegram")
+      .then((mod) => mod.ensureTelegramWebhook())
+      .catch(() => {});
+  }
+}
+
+# =============================================================================
+# 13. prisma/schema.prisma  --  chat data model (RELEVANT MODELS)
+# =============================================================================
+# intent: attachment metadata lives ON the ChatMessage row (one attachment per
+# message). text defaults to "" so attachment-only messages are valid. All
+# attachment* columns are nullable => null means a plain text message.
+
+enum ChatMessageDirection {
+  visitor
+  support
+}
+
+model ChatSession {
+  id               String    @id @default(cuid()) @map("id")
+  visitorId        String    @unique @map("visitor_id")
+  name             String?   @map("name")
+  email            String?   @map("email")
+  userId           String?   @map("user_id")
+  ip               String?   @map("ip")
+  countryCode      String?   @map("country_code")
+  pageUrl          String?   @map("page_url")
+  userAgent        String?   @map("user_agent")
+  telegramChatId   String?   @map("telegram_chat_id")
+  telegramThreadId Int?      @map("telegram_thread_id")
+  status           String    @default("open") @map("status")   // "open" | "closed"
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  messages         ChatMessage[]
+
+  @@map("chat_sessions")
+}
+
+model ChatMessage {
+  id                String               @id @default(cuid()) @map("id")
+  chatSessionId     String               @map("chat_session_id")
+  chatSession       ChatSession          @relation(fields: [chatSessionId], references: [id], onDelete: Cascade)
+  /// visitor | support
+  direction         ChatMessageDirection @map("direction")
+  /// Raw message text (may be empty for attachment-only messages)
+  text              String               @default("") @map("text")
+  /// Telegram message id for support replies
+  telegramMessageId Int?                 @map("telegram_message_id")
+  /// Optional error text if sending failed
+  errorText         String?              @map("error_text")
+  /// Attachment kind: image | video | document | audio | voice
+  attachmentType    String?              @map("attachment_type")
+  /// Original file name of the attachment
+  attachmentName    String?              @map("attachment_name")
+  /// MIME type of the attachment
+  attachmentMime    String?              @map("attachment_mime")
+  /// Attachment size in bytes
+  attachmentSize    Int?                 @map("attachment_size")
+  /// Storage path relative to the chat upload root (e.g. "<sessionId>/<file>")
+  attachmentPath    String?              @map("attachment_path")
+  createdAt         DateTime             @default(now()) @map("created_at")
+
+  @@index([chatSessionId, createdAt])
+  @@map("chat_messages")
+}
+
+# =============================================================================
+# 14. lib/rate-limit.ts  --  chat rate-limit buckets (RELEVANT LINES)
+# =============================================================================
+# intent: per-route request caps per RATE_LIMIT_WINDOW_SEC, overridable via env.
+# The attachment-serving route gets its own generous bucket (media loads fan out
+# multiple GETs per conversation).
+
+const LIMITS = {
+  // ...other routes...
+  "chat.send":       parseInt(process.env.RL_CHAT_SEND       ?? "10", 10),
+  "chat.stream":     parseInt(process.env.RL_CHAT_STREAM     ?? "30", 10),
+  "chat.close":      parseInt(process.env.RL_CHAT_CLOSE      ?? "10", 10),
+  "chat.attachment": parseInt(process.env.RL_CHAT_ATTACHMENT ?? "60", 10),
+} as const;
+
+# =============================================================================
+# 15. app/api/cron/housekeeping/route.ts  --  retention sweep (RELEVANT BLOCK)
+# =============================================================================
+# intent: the cron that expires call data ALSO sweeps stale chat sessions past the
+# same cutoff, deleting each session's attachment folder BEFORE the DB rows so
+# abandoned conversations (never explicitly closed) leave no orphaned files.
+# (import: `import { deleteSessionFiles } from "@/lib/chat/storage";`)
+
+  // ── Clean up stale chat sessions and their stored attachments ──────────
+  // Delete chat sessions that have been idle past the cutoff. Their attachment
+  // folders are removed first so no orphaned files remain if a conversation was
+  // abandoned without an explicit close.
+  const staleChats = await prisma.chatSession.findMany({
+    where: { updatedAt: { lt: cutoff } },
+    select: { id: true },
+  });
+  let chatSessionsDeleted = 0;
+  if (staleChats.length > 0) {
+    for (const c of staleChats) {
+      await deleteSessionFiles(c.id);
+    }
+    const chatIds = staleChats.map((c) => c.id);
+    const result = await prisma.chatSession.deleteMany({ where: { id: { in: chatIds } } });
+    chatSessionsDeleted = result.count;
+    trace.info(`housekeeping: deleted ${chatSessionsDeleted} stale chat session(s) and their attachments`);
+  }
+  // ...chatSessionsDeleted is included in the JSON response...
+
+# =============================================================================
+# 16. Configuration  --  .env.example / .gitignore (RELEVANT LINES)
+# =============================================================================
+# --- .env.example (Live Chat block) ------------------------------------------
+# Live Chat widget
+NEXT_PUBLIC_LIVE_CHAT_ENABLED=true
+NEXT_PUBLIC_LIVE_CHAT_GREETING="Hi there! How can we help you today?"
+# Attachments (default ON; set to "false" to disable uploads client + server)
+NEXT_PUBLIC_LIVE_CHAT_ATTACHMENTS_ENABLED=true
+# Where attachment bytes are stored (relative to cwd) and the per-upload size cap
+CHAT_UPLOAD_DIR=chat-uploads
+CHAT_MAX_UPLOAD_MB=20
+# Telegram support integration
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_SUPPORT_CHAT_ID=
+TELEGRAM_WEBHOOK_SECRET=
+TELEGRAM_WEBHOOK_URL=
+# Redis (optional; falls back to in-memory bus + DB polling)
+REDIS_URL=redis://127.0.0.1:6379
+#
+# --- .gitignore (add) --------------------------------------------------------
+/chat-uploads
+
+# =============================================================================
+# 17. STYLES  --  app/globals.css keyframes (COPY VERBATIM)
+# =============================================================================
+# intent: the widget is styled entirely with inline Tailwind classes (reproduced
+# in section 1's JSX). The only global CSS it needs is these two keyframes.
+# `animate-fade-in-up` is applied to each message wrapper with an inline
+# style={{animationDelay:`${idx*40}ms`}} so a burst of history cascades in.
+
+@keyframes fade-in-up {
+  0%   { opacity: 0; transform: translateY(8px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-up { animation: fade-in-up 0.3s ease-out both; }
+
+@keyframes chat-pulse {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.15); }
+}
+.animate-chat-pulse { animation: chat-pulse 1.5s ease-in-out infinite; }
+
+# =============================================================================
+# 18. TESTS  --  tests/chat.test.ts + tests/chat-attachments.test.ts (bun:test)
+# =============================================================================
+# intent: two suites, run SEPARATELY (bun's mock.module is process-global; the
+# two files register different "@/lib/chat/db" + "@/lib/chat/storage" mocks that
+# would collide in one invocation). package.json scripts: "test:chat" and
+# "test:chat-attachments". Route handlers are imported and called directly with a
+# hand-built NextRequest; globalThis.fetch is mocked and branched on URL; Redis is
+# forced off so the in-memory bus + local rate-limit buckets are used.
+#
+# --- tests/chat.test.ts (inbound webhook direction) --------------------------
+# MOCKS (mock.module):
+#   "@/lib/redis"        -> ensureRedis: async () => null
+#   "@/lib/chat/db"      -> in-memory: Maps for sessions/messages; toMessageDto
+#                           maps attachment* -> attachment DTO
+#   "@/lib/chat/storage" -> STUB recording calls (no disk):
+#       const savedFiles: { sessionId: string; name: string; bytes: number }[] = [];
+#       const deletedSessions: string[] = [];
+#       saveChatFile: async (sessionId, name, data) => {
+#         savedFiles.push({ sessionId, name, bytes: data.byteLength });
+#         return `${sessionId}/${name}`;
+#       },
+#       deleteSessionFiles: async (sessionId) => { deletedSessions.push(sessionId); },
+# HELPERS: build a Telegram webhook POST with the secret header + a JSON body,
+#   call POST(req), then assert on published events (captured via the pubsub
+#   in-memory bus) and on savedFiles/deletedSessions.
+# CASES (attachment-related, alongside the pre-existing text/close cases):
+#   test("ignores messages with neither text nor media"):
+#     POST an update whose message has no text and no photo/doc/etc -> { ok: true }
+#     and NO createChatMessage call.
+#   test("deletes stored attachments when the topic is closed"):
+#     POST a message with forum_topic_closed (or text "/close") for a known
+#     session -> expect deletedSessions to contain session.id AND a status:closed
+#     event to be published.
+#   test("downloads and relays an inbound photo, choosing the largest size"):
+#     fetchMock branches: /getFile -> { ok:true, result:{ file_path:"photos/f.jpg" } };
+#     the file host URL -> a Response with an ArrayBuffer body.
+#     POST an update with message.photo = [smallSize, largeSize].
+#     expect: one published "message" event with attachment.type==="image",
+#     text === caption, savedFiles.length === 1, and the getFile call used the
+#     LARGEST photo's file_id.
+#     (fetch mock signature: (url: string, _init?: RequestInit) so the second arg
+#      is accepted when reading fetchMock.mock.calls.)
+#   test("relays an inbound document with its file name and mime"):
+#     expect attachment.type==="document" and name/mime preserved from the doc.
+#
+# --- tests/chat-attachments.test.ts (storage + helpers + upload + serving) ---
+# SETUP:
+#   process.env.CHAT_UPLOAD_DIR = a fresh os.tmpdir() folder; afterAll rm -rf.
+#   mock.module("@/lib/redis", ensureRedis -> null).
+#   mock.module("@/lib/chat/db", <in-memory>) — a COMPLETE superset of the module:
+#     sessions/messages Maps + findChatSessionByVisitorId, findChatSessionById,
+#     findChatSessionByThreadId, findChatSessionByTelegramMessageId,
+#     createChatSession, updateChatSession, updateChatSessionThread,
+#     createChatMessage, listChatMessages, getChatMessageWithSession,
+#     closeChatSession, closeChatSessionByVisitorId, toMessageDto, toSessionDto.
+#   (This superset is required so the OTHER suite's expectations still resolve if
+#    both are ever loaded in one process.)
+#
+# describe("chat storage")  — REAL lib/chat/storage:
+#   test("saves and reads a file under the session folder"):
+#     const rel = await saveChatFile("sess_1", "hello.png", new Uint8Array([1,2,3]));
+#     expect(rel.startsWith("sess_1/")).toBe(true);
+#     expect([...(await readChatFile(rel))]).toEqual([1,2,3]);
+#   test("deletes all files for a session"):
+#     saveChatFile then deleteSessionFiles -> readChatFile rejects / dir gone.
+#   test("guards against path traversal"):
+#     expect(() => resolveStoredPath("../../etc/passwd")).toThrow();
+#   test("maps MIME types to attachment kinds"):
+#     attachmentTypeFromMime("image/png")==="image"; "video/mp4"==="video";
+#     "audio/mpeg"==="audio"; "application/pdf"==="document".
+#   test("reflects the attachments-enabled env flag"):
+#     default true; set "false" -> clientAttachmentsEnabled() === false.
+#
+# describe("telegram media helpers")  — REAL lib/chat/telegram, fetch mocked:
+#   test("extractMedia selects the largest photo size"):
+#     photo:[{file_size:100,...},{file_size:900,...}] -> ref.fileId is the 900 one.
+#   test("extractMedia handles documents and returns null for plain text"):
+#     a document message -> type "document"; a text-only message -> null.
+#   test("getTelegramFile resolves a file_path"):
+#     fetch -> { ok:true, result:{ file_path } }; assert returned file_path.
+#   test("downloadTelegramFile fetches from the file host"):
+#     assert the request URL contains "/file/bot" + the path; returns a Buffer.
+#   test("sendMediaToTopic posts multipart to the correct method"):
+#     type "image" -> fetch URL ends with /sendPhoto and body is FormData.
+#
+# describe("chat send route: uploads")  — REAL send route + storage + telegram; db mock:
+#   HELPER: build a multipart NextRequest with a Blob under "file".
+#   test("rejects uploads with a 403 when attachments are disabled"):
+#     set NEXT_PUBLIC_LIVE_CHAT_ATTACHMENTS_ENABLED="false" -> POST -> 403.
+#   test("rejects a request with no file"):
+#     multipart without "file" -> 400.
+#   test("stores an uploaded image, relays it, returns the attachment DTO"):
+#     fetch mock: /createForumTopic -> thread; /sendPhoto -> { ok:true, result:{ message_id } }.
+#     POST image -> 200; data.messages[last].attachment.type==="image";
+#     text === caption; errorText undefined; bytes readable from disk via the
+#     persisted attachmentPath.
+#   test("persists the attachment with an errorText when Telegram delivery fails"):
+#     /sendDocument -> { ok:false, description:"Bad Request" } -> still 200; the
+#     persisted message has errorText containing the Telegram description
+#     (store-first contract) and the file still exists on disk.
+#
+# describe("chat attachment endpoint")  — REAL GET + storage; db mock:
+#   SETUP: seed a session (visitorId "vis_ok") + a message whose attachmentPath
+#     points at a real stored file.
+#   test("serves bytes inline for the owning visitor"):
+#     GET ?visitorId=vis_ok -> 200; Content-Type image/png;
+#     Content-Disposition starts with "inline"; body bytes match.
+#   test("forces download when ?download=1"):
+#     Content-Disposition starts with "attachment".
+#   test("denies access to a different visitor"):
+#     GET ?visitorId=vis_other -> 403.
+#   test("requires a visitorId"):
+#     GET with no visitorId -> 400.
+#
+# VERIFY (copy-paste):
+#   bun run test:chat
+#   bun run test:chat-attachments
+#   # or directly:
+#   bun test tests/chat.test.ts
+#   bun test tests/chat-attachments.test.ts
+
+# =============================================================================
+# END OF VERBOSE DDIFF
+# =============================================================================
+# See live-chat.ddiff for the condensed reference, the styling class-by-element
+# map, and the BUGS FIXED / FEATURES ADDED changelogs.

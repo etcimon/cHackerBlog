@@ -122,6 +122,69 @@ model ArticleTranslation {
   @@index([articleId, locale])
 }
 
+/// A live-chat conversation between a site visitor and support (relayed to a
+/// Telegram supergroup forum topic — one topic per session). `visitorId` is an
+/// opaque, per-conversation shared secret minted client-side; it rotates when a
+/// conversation ends, so file storage is keyed on the STABLE `id` instead.
+model ChatSession {
+  id               String   @id @default(cuid()) @map("id")
+  /// Opaque client token (shared secret used to authorize SSE + attachments).
+  visitorId        String   @unique @map("visitor_id")
+
+  name             String?  @map("name")
+  email            String?  @map("email")
+  ip               String?  @map("ip")
+  countryCode      String?  @map("country_code")
+  pageUrl          String?  @map("page_url")
+  userAgent        String?  @map("user_agent")
+
+  /// Telegram supergroup id + forum topic (thread) id (1:1 with a session).
+  telegramChatId   String?  @map("telegram_chat_id")
+  telegramThreadId Int?     @map("telegram_thread_id")
+
+  /// "open" | "closed".
+  status           String   @default("open") @map("status")
+
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  messages         ChatMessage[]
+
+  @@map("chat_sessions")
+  @@index([visitorId])
+  @@index([telegramThreadId])
+  @@index([status, updatedAt])
+}
+
+/// A single message in a ChatSession. `direction` is "visitor" | "support"
+/// (stored as String for SQLite/PostgreSQL parity — see header). Attachment
+/// metadata lives on the row (one optional file per message); a plain-text
+/// message leaves every attachment* column null. `attachmentPath` is a storage-
+/// root-relative path so the storage root can move without a data migration.
+model ChatMessage {
+  id                String   @id @default(cuid()) @map("id")
+  chatSessionId     String   @map("chat_session_id")
+  chatSession       ChatSession @relation(fields: [chatSessionId], references: [id], onDelete: Cascade)
+
+  direction         String   @map("direction")
+  text              String   @default("") @map("text")
+  telegramMessageId Int?     @map("telegram_message_id")
+  errorText         String?  @map("error_text")
+
+  // --- Attachment columns (all nullable; null => plain text message) --------
+  attachmentType    String?  @map("attachment_type")
+  attachmentName    String?  @map("attachment_name")
+  attachmentMime    String?  @map("attachment_mime")
+  attachmentSize    Int?     @map("attachment_size")
+  attachmentPath    String?  @map("attachment_path")
+
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  @@map("chat_messages")
+  @@index([chatSessionId, createdAt])
+  @@index([telegramMessageId])
+}
+
 /// Tags listed at the top of the feed and on each article header.
 model Tag {
   id        String    @id @default(cuid()) @map("id")

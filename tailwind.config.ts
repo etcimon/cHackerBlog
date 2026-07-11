@@ -30,6 +30,10 @@ const config: Config = {
           from: { opacity: "0", transform: "translateY(8px)" },
           to: { opacity: "1", transform: "translateY(0)" },
         },
+        "fade-in-up": {
+          "0%": { opacity: "0", transform: "translateY(8px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
         "expand": {
           from: { opacity: "0", maxHeight: "0" },
           to: { opacity: "1", maxHeight: "5000px" },
@@ -41,6 +45,7 @@ const config: Config = {
       },
       animation: {
         "fade-in": "fade-in 0.5s ease-out both",
+        "fade-in-up": "fade-in-up 0.3s ease-out both",
         "expand": "expand 0.45s ease-out both",
         "scan": "scan 8s linear infinite",
       },

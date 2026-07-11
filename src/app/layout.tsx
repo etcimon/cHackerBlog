@@ -13,6 +13,7 @@ import { getSettings } from "@/lib/settings";
 import { activeTheme, resolvedCodeTheme } from "@/lib/theme";
 import { Providers } from "@/components/providers";
 import { Footer } from "@/components/footer";
+import LiveChat from "@/components/live-chat";
 
 export async function generateMetadata(): Promise<Metadata> {
   const s = await getSettings();
@@ -47,6 +48,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
         <Providers>
           {children}
           <Footer xHandle={settings.xHandle} linkedinUrl={settings.linkedinUrl} />
+          <LiveChat />
         </Providers>
       </body>
     </html>

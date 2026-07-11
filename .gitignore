@@ -37,6 +37,9 @@ prisma/migration_lock.toml
 /public/uploads/*
 !/public/uploads/.gitkeep
 
+# Live-chat attachment store (per-session on-disk files)
+/chat-uploads
+
 # PM2
 logs/
 *.log

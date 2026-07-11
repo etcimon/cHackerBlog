@@ -1,0 +1,443 @@
+# wysiwyg-richtext.intent.diff
+#
+# INTENT-ORIENTED DIFF (coding-agent oriented "ddiff").
+#
+# Purpose: transplant cHackerBlog's rich authoring + display subsystem into
+# another Next.js 15 (App Router) + TypeScript project with MINIMAL coupling.
+# Each hunk below is a `new file` whose `+` body states the INTENT, the CONTRACT
+# (exported symbols + signatures), and the INVARIANTS a coding agent must honor.
+# Concrete algorithm bodies are deliberately elided as "implementation details";
+# where a rule is load-bearing for correctness it is spelled out.
+#
+# Isolation boundary (self-contained): the editor, the renderer, the embed
+# grammar, syntax highlighting, translation, and their tests depend only on:
+#   marked, turndown, highlight.js, lucide-react, react, react-hook-form, zod
+#   (+ prisma & a KV/cache for translation persistence only).
+# NOTHING here reaches into feed/comments/auth/social except the two thin seams
+# marked [SEAM] (admin gate on upload; cache layer for translation).
+#
+# Apply order = dependency order (top-down = leaves first).
+
+################################################################################
+# 0. DEPENDENCIES / BUILD                                                       #
+################################################################################
+diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ intent: runtime deps that the subsystem hard-requires @@
++  dependencies += {
++    "marked": "^12.0.1",         # markdown -> HTML (block+inline tokenizer API)
++    "turndown": "^7.1.2",        # HTML -> markdown (addRule API used for round-trip)
++    "highlight.js": "^11.11.1",  # syntax highlighting; served from node_modules at runtime
++    "lucide-react": "^0.427.0",  # toolbar + embed glyphs (also inlined as raw SVG path data)
++    "react-hook-form": "^7.52.2", "@hookform/resolvers": "^3.9.0", "zod": "^3.23.8"
++  }
++  # INTENT: pin marked to v12 — the renderer.code(code, lang) signature and the
++  # `extensions[].tokenizer/renderer` block/inline API below are v12-shaped.
++  # A newer marked changes `code()` to receive a token object; port would break.
++  # devDeps: sass (SCSS theme tokens), a test runner with jsdom (bun test / jest).
+
+################################################################################
+# 1. EMBED GRAMMAR CORE  (src/lib/embeds.ts)                                    #
+#    The keystone. Everything else composes on this single custom grammar.      #
+################################################################################
+diff --git a/src/lib/embeds.ts b/src/lib/embeds.ts
+new file mode 100644
+--- /dev/null
++++ b/src/lib/embeds.ts
+@@ INTENT @@
++# One custom markdown grammar that survives the editor's HTML<->Markdown
++# round-trip losslessly. The article body is STORED AS HTML; markdown exists
++# only transiently (mode switch, translation). Every rich element therefore
++# needs THREE synchronized representations that map 1:1:
++#   (a) canonical markdown tag   (b) rendered HTML w/ data-* attrs   (c) DOM
++# The data-* attributes are the round-trip anchor: turndown reads them to
++# rebuild the exact tag; marked reads the tag to rebuild the exact HTML.
++#
++@@ CONTRACT: size spec — shared vocabulary for embeds, images, code blocks @@
++  type EmbedSize =
++    | { type: "pixels"; width: number; height: number }
++    | { type: "percent"; width: number }
++    | { type: "preset"; size: "small" | "medium" | "large" }
++    | { type: "none" }
++  function parseSizeSpec(input: string): EmbedSize   # HAND-WRITTEN STATE MACHINE.
++    # INTENT: accept "640x360" | "50%" | "small|medium|large" | "width=W [height=H]"
++    # in any embed bracket. Invariant: unparseable => {type:"none"} (never throw),
++    # so an unknown spec degrades to default sizing instead of corrupting output.
++  function sizeSpecToString(size: EmbedSize): string  # inverse of parseSizeSpec;
++    # pixels w/o height -> "width=W", with height -> "WxH". MUST be a true inverse
++    # for the recognized forms or round-trip drifts.
++
++@@ CONTRACT: file/media attachment embeds  @[name.ext](url) @@
++  const ALLOWED_FILE_EXTS: string[]         # video/audio/doc/sheet/slides/archive
++  const FILE_ACCEPT: string                 # comma-joined ".ext" for <input accept>
++  const CONTENT_TYPES: Record<ext,mime>     # [SEAM] reused by the file-serving route
++  function extOf(nameOrUrl): string; kindForExt(ext): "video"|"audio"|"file"
++  function buildEmbedHtml({name,src,size?}): string
++    # INTENT: video -> <video>, audio -> <audio>, else a download "card" with an
++    # inlined lucide icon (path data embedded, NO react at render time so it works
++    # server-side and inside contentEditable). Emits contenteditable="false" +
++    # data-embed="1" data-name data-src data-size. Self-styling via .cb-embed*.
++  function buildEmbedMarkdown({name,src,size?}): string   # -> "@[name size?](url)"
++
++@@ CONTRACT: URL embeds (rich provider OR generic link preview) — same bracket @@
++  function isExternalHttpUrl(s): boolean
++  function shouldTreatAsUrlEmbed(href): boolean
++    # RULE: external http(s) that is NOT /api/uploads/* and NOT a known media/doc
++    # extension => URL embed. Otherwise it stays a file/media embed. This single
++    # predicate decides provider-iframe vs <video> vs download-card.
++  function parseUrlBracket(bracket): { size: EmbedSize; urlOnly: boolean }
++  function buildUrlEmbedHtml({url,size?,urlOnly?,meta?}): string
++    # THREE branches, all carrying data-embed-type="url" data-src data-size:
++    #   urlOnly     -> plain <a> (no preview)
++    #   provider    -> <figure><div.cb-embed__frame>{ext-embeds html}</div></figure>
++    #   generic     -> link-preview card marked data-link-hydrate="1" (client fills OG)
++  function buildUrlEmbedMarkdown({url,size?,urlOnly?}): string  # "@[size? urlOnly?](url)"
++    # INVARIANT: NO fetched metadata is ever serialized — only url+size+urlOnly.
++    # Metadata is always re-derived/re-fetched so markdown stays deterministic.
++
++@@ CONTRACT: sized images  ![alt](url){spec}  @@
++  function buildImageHtml/{alt,src,size} ; buildImageMarkdown
++  function registerImageSizeExtension(marked) ; addImageTurndownRule(turndown)
++    # INTENT: reuse the SAME size grammar as embeds so images & embeds stay lockstep.
++    # data-cb-img="1" is the round-trip anchor; plain images fall through untouched.
++
++@@ CONTRACT: preview separator  --END PREVIEW--  <-> <hr data-preview-end> @@
++  const PREVIEW_END_MARKER = "--END PREVIEW--"
++  function buildPreviewEndHtml(): string          # <hr data-preview-end class=cb-preview-end>
++  function extractPreviewHtml(html): string|null  # slice body BEFORE the marker (feed preview)
++  function registerPreviewEndExtension(marked) ; addPreviewEndTurndownRule(turndown)
++
++@@ CONTRACT: the two aggregator registrars everything else calls @@
++  function registerEmbedExtension(marked): void
++    # INTENT (single entry): idempotently (private __cbEmbed flag) registers the
++    # `@[..](..)` block tokenizer AND transitively images + preview-end. A block
++    # tokenizer (not inline) is required so a bare @[](url) on its own line becomes
++    # a figure, not a paragraph child.
++  function addEmbedTurndownRule(turndown): void
++    # INTENT (single entry): adds turndown rules that collapse: cbEmbed(data-embed)
++    # -> @[..](..), sized image, preview-end, AND code blocks. The code-block rules
++    # are the subtle part:
++    #   * codeBlock: <pre><code> -> ```lang [size] [preview|collapse=N]``` by reading
++    #     data-size/data-preview-lines/data-collapse-kind off the enclosing .cb-code.
++    #   * codeBlockHeader / codeBlockToggle: replacement:()=>"" so the language chip
++    #     and the toggle bar NEVER leak into markdown.
++    #   * codeBlockWrapper: unwrap .cb-code, leaving <pre> for codeBlock rule.
++    # INVARIANT: header/toggle stripping + wrapper unwrap must all be present or
++    # the round-trip emits UI chrome as literal text.
+
+################################################################################
+# 2. PROVIDER EMBEDS  (src/lib/ext-embeds.ts)   — pure, dependency-free         #
+################################################################################
+diff --git a/src/lib/ext-embeds.ts b/src/lib/ext-embeds.ts
+new file mode 100644
++++ b/src/lib/ext-embeds.ts
+@@ INTENT @@
++# Single source of truth mapping a recognized platform URL to its canonical
++# iframe/blockquote markup. Pure + isomorphic (server render, browser preview,
++# jsdom tests) — no fetch, no DOM. Derives everything from the URL string alone
++# so markdown round-trip is stable.
++  interface EmbedFrame { provider; html; shape:"video"|"audio"|"post"; label; script? }
++  function detectProvider(url): ProviderName|null       # by hostname
++  function buildProviderEmbed(url): EmbedFrame|null      # null => caller uses generic preview
++  # Providers: youtube, youtubemusic, vimeo, rumble, twitch, x, facebook,
++  # instagram, soundcloud. NOTES a coding agent must preserve:
++  #  * Twitch iframes REQUIRE &parent=<host>; baked from window.location at author
++  #    time, "localhost" fallback under SSR/tests.
++  #  * X returns shape:"post" + script:"platform.twitter.com/widgets.js" — the ONLY
++  #    provider needing client script injection (see link-embeds hydrator).
++  #  * shape drives aspect-ratio CSS (video 16:9, post 3:4, audio fixed height).
+
+################################################################################
+# 3. LINK PREVIEW  (src/lib/link-preview.ts  +  src/lib/link-embeds.ts)         #
+################################################################################
+diff --git a/src/lib/link-preview.ts b/src/lib/link-preview.ts
+new file mode 100644
++++ b/src/lib/link-preview.ts
+@@ INTENT: pure helpers for the /api/link-preview route (kept OUT of route.ts so @@
++# Next's route type-gen isn't broken by extra exports; also unit-testable).
++  interface LinkPreview { url; title?; description?; image?; siteName? }
++  function isPrivateAddress(ip): boolean          # v4+v6 private/loopback/link-local/ULA
++  async function assertSafeUrl(raw): Promise<URL>  # SSRF GUARD: http(s) only; reject
++    # localhost; resolve DNS and reject if ANY resolved A/AAAA is private. Throws
++    # AppError with codes INVALID_URL/INVALID_SCHEME/SSRF_BLOCKED/DNS_ERROR.
++  function parseHtmlMeta(html,url): LinkPreview    # OG -> twitter -> <title>; resolves
++    # relative og:image against page URL. Regex-based (no DOM dep on server).
+diff --git a/src/lib/link-embeds.ts b/src/lib/link-embeds.ts
+new file mode 100644
++++ b/src/lib/link-embeds.ts
+@@ INTENT: CLIENT hydration, idempotent, safe after every re-render @@
++  function hydrateLinkEmbeds(root): void
++    # (1) For each [data-link-hydrate="1"]:not([data-link-hydrated]) fetch
++    #     /api/link-preview and fill .cb-embed__title/site/desc/thumb. Mark
++    #     data-link-hydrated="1" FIRST to dedupe in-flight across rapid renders.
++    #     Network failure leaves the base card (host + Visit-site) usable.
++    # (2) For each [data-embed-script] inject the script ONCE (module Set), then
++    #     call the provider widget factory (twttr.widgets.load(root)) to upgrade
++    #     blockquotes. INVARIANT: never inject a script twice per page.
+
+################################################################################
+# 4. CODE-BLOCK RENDER  (src/lib/code-block-render.ts)                          #
+#    SHARED by the editor (client) AND the translation pipeline (server) so     #
+#    authored and translated code blocks are byte-identical structures.         #
+################################################################################
+diff --git a/src/lib/code-block-render.ts b/src/lib/code-block-render.ts
+new file mode 100644
++++ b/src/lib/code-block-render.ts
+@@ INTENT @@
++  interface CodeBlockInfo { language; previewLines?; collapseKind:"preview"|"collapse"; size:EmbedSize }
++  function parseCodeBlockInfo(info): CodeBlockInfo
++    # Parses the fence info string: first token = language; `preview=N`/`collapse=N`
++    # anywhere; remaining tokens = size spec (reuses parseSizeSpec). Order-free.
++  function escapeCode(s): string          # &,<,> only (used when hljs not ready)
++  function buildCodeBlock(bodyHtml, lang, totalLines, {previewLines,collapseKind,size}, highlighted): string
++    # EMITS the canonical wrapper the CSS + toggles depend on:
++    #   <div class="cb-code [collapsed] [size-*]"
++    #        data-lines data-preview-lines? data-collapse-kind? data-size?
++    #        style="[max-width..] [--cb-preview-lines:N]">
++    #     <div class="cb-code__header">{icon}{langLabel}</div>
++    #     <pre class="cb-code__pre"><code class="language-LANG [hljs]">bodyHtml</code></pre>
++    #     <button class="cb-code__toggle" ...>{caret}</button>   # only if collapsible
++    #   </div>
++    # INVARIANTS: collapsible <=> previewLines && totalLines>previewLines. The
++    # --cb-preview-lines custom prop drives the collapsed max-height in `em` (see CSS).
++    # `highlighted` toggles the `hljs` class so the client highlight pass can SKIP
++    # already-highlighted blocks (idempotency guard = classList.contains("hljs")).
+
+################################################################################
+# 5. SYNTAX HIGHLIGHTING  (src/lib/highlight.ts)  + serving route               #
+################################################################################
+diff --git a/src/lib/highlight.ts b/src/lib/highlight.ts
+new file mode 100644
++++ b/src/lib/highlight.ts
+@@ INTENT: lazy, on-demand highlight.js with full language coverage, small bundle @@
++  async initHighlightJs()                 # dynamic import once; registers ~common langs
++  async loadHighlightJsCss()              # <link> to /api/highlightjs/styles/<theme>.css;
++    # theme from <html data-code-theme>; swaps the single #hljs-theme-css link on change
++  async loadHighlightJsLanguage(lang)     # canonicalize aliases (js->javascript, ...);
++    # dynamic import `highlight.js/lib/languages/<lang>` + registerLanguage; dedupe via Set
++  hasCodeBlocks(html) ; extractLanguagesFromHtml(html) ; ensureHighlightJsReady(html)
++  highlightCodeInElement(el)              # highlight every <pre code> NOT already .hljs;
++    # leaves un-loadable langs unmarked so a later pass can retry
++  interface CodeToggleOptions { isExpanded?(i):bool; onToggle?(i,expanded):void }
++  wireCodeBlockToggles(el, options?)      # ** the load-bearing UX fix **
++    # INTENT: ONE delegated click listener on the STABLE container (not per-button),
++    # because the body is re-injected via dangerouslySetInnerHTML and re-highlighted
++    # in place — per-button listeners would be stranded on detached nodes. On each
++    # (re)wire it also RE-APPLIES persisted expanded/collapsed state (keyed by block
++    # index) so blocks don't flicker back to collapsed on re-render. Idempotent:
++    # re-adding the same handler ref is a DOM no-op.
++  getHljsModule()                         # sync accessor for the marked renderer
+diff --git a/src/app/api/highlightjs/[...path]/route.ts b/...
+new file mode 100644
++++ ...
+@@ INTENT: serve highlight.js css/js FROM node_modules without exposing the dir @@
++  GET -> read node_modules/highlight.js/<path>; reject ".." and "\\"; long immutable
++  cache. runtime="nodejs". (Client asks for /api/highlightjs/styles/<theme>.css.)
+
+################################################################################
+# 6. TRANSLATION  (src/lib/grok.ts)  + route  [OPTIONAL FEATURE]                #
+#    Depends on prisma + a cache seam; drop entirely if not porting i18n.       #
+################################################################################
+diff --git a/src/lib/grok.ts b/src/lib/grok.ts
+new file mode 100644
++++ b/src/lib/grok.ts
+@@ INTENT: translate the HTML body by reducing it to translation-safe MARKDOWN @@
++# WHY markdown: the same turndown/marked round-trip that powers the editor makes
++# markdown the element-addressable representation where prose is translatable but
++# code fences, @[..](..) embeds, image/link targets, and --END PREVIEW-- survive.
++  htmlToTranslatableMarkdown(html) / markdownToHtml(md)   # reuse embed marked+turndown
++  extractCodeBlocks(md) -> {markdown, codeBlocks}         # replace fences w/ <!--CBn-->
++    # so code is NEVER sent to the model (tokens saved, no alteration). Handles
++    # 3+ backtick fences; closes only on >= backticks (turndown emits 4-tick fences).
++  restoreCodeBlocks(md, codeBlocks)                       # inverse
++  chunkMarkdown(md, maxChars)                             # split on line boundaries,
++    # NEVER through a code block; an oversized block gets its own intact chunk.
++  type CompletionFn = (prompt:string)=>Promise<string>   # INJECTABLE (tests pass a
++    # recorded fn; production = callGrok, an OpenAI-compatible POST to x.ai).
++  translateArticleBody({title,contentHtml,srcLocale,tgtLocale,complete?})
++    # pipeline: html->md -> strip code -> chunk -> translate chunks + title in
++    # parallel -> restore code -> ensure hljs langs -> md->HTML (highlighted).
++  translateArticle(...)   # [SEAM] read-through cache -> DB row -> Grok; per-article
++    # rate limit; write-through persist. Requires prisma + a remember()/invalidate KV.
++  invalidateArticleTranslations(id)  # call on source edit/delete (stale eviction).
++  # marked.use({renderer.code}) here MUST mirror the editor's renderer so
++  # translated blocks get identical .cb-code wrappers (see §4/§7).
+diff --git a/src/app/api/articles/[id]/translate/route.ts b/...
+new file mode 100644
++++ ...
+@@ INTENT: POST {locale} -> {enabled,title,content}; gated on grokConfigured() @@
++  # returns {enabled:false} when unconfigured so the client simply hides the button.
++  # maps "rate limit exceeded" -> 429, upstream failure -> 502 with real reason.
+
+################################################################################
+# 7. THE EDITOR  (src/components/wysiwyg.tsx)                                    #
+################################################################################
+diff --git a/src/components/wysiwyg.tsx b/src/components/wysiwyg.tsx
+new file mode 100644
++++ b/src/components/wysiwyg.tsx
+@@ CONTRACT @@  interface Props { value: string /*HTML*/; onChange(html:string):void }
+@@ INTENT: dual-mode editor; the VALUE IS ALWAYS HTML @@
++# Mode A "rich": a contentEditable <div> driven by document.execCommand for
++#   bold/italic/H2/quote/pre/list/link; insertHTML for embeds/images/separator.
++# Mode B "md": a <textarea> + live preview pane (dangerouslySetInnerHTML) with a
++#   thin collapsible divider; collapsed preview SKIPS marked() entirely (cheap typing).
++# Switching rich->md: turndown(html) (fresh instance + addEmbedTurndownRule).
++# Switching md->rich: marked(md) then re-inject + re-wire toggles + hydrate embeds.
++# CARET PRESERVATION across switch: anchor caret to its top-level block index and
++#   restore to the end of the equivalent block after the switch (helpers included).
++# Module-scope: registerEmbedExtension(marked) + marked.use({renderer.code}) that
++#   calls parseCodeBlockInfo + buildCodeBlock (§4) using getHljsModule(); if hljs
++#   not yet loaded, emit escaped plain code and re-render when it becomes ready.
++# Lazy hljs: only when hasCodeBlocks(md); load init+css+langs, then re-render.
++# Uploads: [SEAM] POST /api/upload (multipart {file}) -> {url}; rich mode inserts
++#   <img>/embed HTML, md mode splices the ![]()/@[]() tag at the caret.
++# Toolbar buttons use lucide-react icons; embed/link/image/attach/separator.
+diff --git a/src/components/code-block.tsx b/src/components/code-block.tsx
+new file mode 100644
++++ b/...
+@@ INTENT: standalone React collapse/expand block (alt to the delegated DOM path); @@
++#   used where code is rendered as a React child rather than injected HTML.
+
+################################################################################
+# 8. THE DISPLAY  (src/components/article-card.tsx  — extract the body renderer) #
+################################################################################
+diff --git a/src/components/rich-body.tsx b/src/components/rich-body.tsx
+new file mode 100644
++++ b/...
+@@ INTENT: the *renderer half* of the subsystem, isolated from feed/comments @@
++# Port ONLY the body-rendering concern (drop pin/publish/translate-button chrome
++# unless you also port §6). A <div className="article-body article-rendered"
++# dangerouslySetInnerHTML={{__html: bodyHtml}}> plus TWO effects on a ref:
++#   * useLayoutEffect: wireCodeBlockToggles(ref, persistOpts) + hydrateLinkEmbeds(ref)
++#     — SYNCHRONOUS, before paint, so toggles work regardless of block count and
++#       persisted expanded state never flickers.
++#   * useEffect: ensureHighlightJsReady(bodyHtml).then(highlightCodeInElement + re-wire)
++#     — ASYNC, lazy hljs; a `stale` flag guards against bodyHtml changing mid-load.
++# expandedBlocksRef: Set<number> keyed by block index survives re-injection.
++# --END PREVIEW--: use extractPreviewHtml(fullHtml) to render the feed preview
++#   (full code blocks intact) and hide .cb-preview-end via .article-rendered CSS.
+
+################################################################################
+# 9. UPLOAD ENDPOINTS  (admin write + public read)                              #
+################################################################################
+diff --git a/src/app/api/upload/route.ts b/...
+new file mode 100644
++++ ...
+@@ INTENT: [SEAM admin gate] POST multipart {file} -> {url} (201) @@
++#   validate ext against images + ALLOWED_FILE_EXTS (prefer filename ext, fall back
++#   to image MIME); size <= UPLOAD_MAX_SIZE; write random name to UPLOAD_DIR under
++#   /public; return /api/uploads/<name>. runtime="nodejs". Replace requireAdmin()
++#   with the target project's auth guard.
+diff --git a/src/app/api/uploads/[...path]/route.ts b/...
+new file mode 100644
++++ ...
+@@ INTENT: GET serve uploaded file; Content-Type from CONTENT_TYPES registry; @@
++#   path-traversal guard (resolved path must stay under UPLOAD_DIR); immutable cache.
+diff --git a/src/app/api/link-preview/route.ts b/...
+new file mode 100644
++++ ...
+@@ INTENT: GET ?url= -> LinkPreview; IP rate-limited; assertSafeUrl (SSRF); read @@
++#   <= 512KB or up to </head>; only parse text/html; 6s timeout. Uses link-preview.ts.
+
+################################################################################
+# 10. PERSISTENCE  (prisma/schema.prisma)                                       #
+################################################################################
+diff --git a/prisma/schema.prisma b/prisma/schema.prisma
+--- a/prisma/schema.prisma
++++ b/prisma/schema.prisma
+@@ INTENT: minimum columns the subsystem reads/writes @@
++  model Article {
++    content String   # ** the rich HTML body produced by the WYSIWYG **  <-- required
++    locale  String @default("en")
++    # only if porting §6 translation:
++    translationCount  Int      @default(0)
++    lastTranslationAt DateTime?
++    translations ArticleTranslation[]
++  }
++  # only if porting §6:
++  model ArticleTranslation {
++    articleId; locale; sourceLocale; title; content   # content = translated HTML
++    @@unique([articleId, locale])                      # onDelete: Cascade
++  }
++  # NOTE: keywords/arrays stored as String for sqlite<->postgres portability.
+
+################################################################################
+# 11. STYLING  (SCSS theme tokens + rich-element CSS)                           #
+################################################################################
+diff --git a/src/styles/themes/_tokens.scss b/...
+diff --git a/src/styles/themes/_palettes.scss b/...
+diff --git a/src/styles/themes/_themes.scss b/...
+new file mode 100644
++++ ...
+@@ INTENT: theming contract = CSS custom props, NOT env/db @@
++# emit() writes a palette (bg/fg/accent/muted/card/border + 3 font vars) as
++# --cb-* custom properties under [data-theme="hacker|medium|substack"] (+ :root
++# default). Colors are "r g b" triplets so `rgb(var(--cb-x) / <alpha>)` works.
++# Dark vs bright is JUST a palette: hacker = green-on-black (dark), medium/substack
++# = paper (bright). substack = map.merge($medium, overrides) — "extend a theme".
++# <html data-theme=...> is set server-side from a THEME env/config value.
+diff --git a/src/styles/globals.scss b/src/styles/globals.scss  (append .article-body block)
++++ ...
+@@ INTENT: ALL rich-element chrome reads ONLY --cb-* tokens, so every theme shares @@
++# one layout and differs only by palette. hljs TOKEN colors come from the separate
++# highlight.js stylesheet (data-code-theme), decoupled from site theme chrome.
++# Blocks to port verbatim (structure is coupled to the emitted class names):
++#   .article-body typography (h/p/a/img/ul/ol/pre/blockquote, inline `code` chip)
++#   .cb-img--size-*                             # sized images
++#   .cb-preview-end (+ hidden in .article-rendered)
++#   .cb-code / __header / __pre / __toggle / __caret ; .collapsed max-height uses
++#     calc(var(--cb-preview-lines,6) * 1.5em + 2*--cb-code-pad-y)  <-- N-line preview
++#     ; .cb-code--size-{small,medium,large} (medium wraps long lines)
++#   .cb-embed--file/video/audio ; __icon/__meta/__name/__type/__btn/__caption
++#   .cb-embed--url/--rich/__frame(--video 16:9,--post 3:4,--audio 166px)/__frame iframe
++#   .cb-embed--link (thumb/meta/title/desc/url/visit) ; a.cb-embed--urlonly
++#   @media(max-width:480px) stacking for cards.
++# Per-theme refinements in _themes.scss only tweak radii/glow/--cb-code-bar.
+
+################################################################################
+# 12. TESTS  (port as the executable spec of the round-trip invariants)         #
+################################################################################
+diff --git a/tests/unit/embeds-roundtrip.test.ts b/...
+new file mode 100644
++++ ...
+@@ INTENT: the CANARY suite — asserts md -> HTML -> md is IDENTITY for every tag @@
++#   * parseSizeSpec / sizeSpecToString for all forms (WxH, %, presets, width=/height=)
++#   * file/media embeds (pdf,mp3,mp4,docx,xlsx,pptx,zip,txt) incl. sizes & query params
++#   * sized images {small|WxH|width=|%}; plain images untouched; unknown spec => text
++#   * --END PREVIEW-- render + round-trip + extractPreviewHtml (keeps code block intact)
++#   * URL embeds: shouldTreatAsUrlEmbed, detectProvider, parseUrlBracket,
++#     provider iframe gen (YouTube id, SoundCloud permalink strips utm), generic
++#     link card w/ data-link-hydrate + Visit-site, urlOnly plain anchor,
++#     file/media NOT misdetected as URL, builder-vs-marked HTML parity.
++#   Run under jsdom (turndown needs a DOM). This suite failing = round-trip broken.
+diff --git a/tests/unit/code-block-roundtrip.test.ts b/...
++++ ...
+@@ INTENT: <pre><code> and .cb-code wrappers round-trip to ```lang [size] [preview|collapse=N]``` @@
++#   asserts header label + toggle caret NEVER leak into markdown; hljs class tolerated.
+diff --git a/tests/unit/syntax-highlighting.test.ts b/...
++++ ...
+@@ INTENT: language aliasing/registration + highlightCodeInElement idempotency. @@
+diff --git a/tests/unit/grok-translation.test.ts b/...  (only with §6)
++++ ...
+@@ INTENT: pipeline w/ INJECTED recorded completion (never hits network). Asserts @@
++#   prose translated while code/embed/--END PREVIEW-- survive; chunking never splits
++#   a fence; extract/restore incl. 4-backtick fences; translated HTML re-reduces cleanly.
++#   Fixtures: tests/fixtures/translation/{article.html,grok-result.md}.
+diff --git a/tests/e2e/{wysiwyg,code-block-collapse}.test.ts b/...  (Puppeteer, optional)
++++ ...
+@@ INTENT: browser proof that mode toggle, insert, and collapse/expand bars work. @@
+
+# ============================================================================ #
+# PORTING CHECKLIST (dependency order)                                         #
+#   [ ] deps (marked@12, turndown, highlight.js, lucide-react)                 #
+#   [ ] embeds.ts  -> ext-embeds.ts -> link-preview.ts/link-embeds.ts          #
+#   [ ] code-block-render.ts -> highlight.ts + /api/highlightjs route          #
+#   [ ] wysiwyg.tsx + code-block.tsx ; rich-body renderer                      #
+#   [ ] /api/upload (rewire admin gate) + /api/uploads + /api/link-preview     #
+#   [ ] SCSS: _tokens/_palettes/_themes + .article-body/.cb-* blocks           #
+#   [ ] Prisma: Article.content (+ translation models only if §6)             #
+#   [ ] §6 Grok (+ cache seam + translate route)  — OPTIONAL                    #
+#   [ ] port embeds-roundtrip + code-block-roundtrip tests; make them green    #
+# TWO SEAMS TO REWIRE: (1) admin gate in /api/upload; (2) cache in grok.ts.    #
+# ============================================================================ #

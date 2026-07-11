@@ -54,6 +54,8 @@ export const ModelName = {
   SiteSettings: 'SiteSettings',
   Article: 'Article',
   ArticleTranslation: 'ArticleTranslation',
+  ChatSession: 'ChatSession',
+  ChatMessage: 'ChatMessage',
   Tag: 'Tag',
   Comment: 'Comment'
 } as const
@@ -129,6 +131,43 @@ export const ArticleTranslationScalarFieldEnum = {
 } as const
 
 export type ArticleTranslationScalarFieldEnum = (typeof ArticleTranslationScalarFieldEnum)[keyof typeof ArticleTranslationScalarFieldEnum]
+
+
+export const ChatSessionScalarFieldEnum = {
+  id: 'id',
+  visitorId: 'visitorId',
+  name: 'name',
+  email: 'email',
+  ip: 'ip',
+  countryCode: 'countryCode',
+  pageUrl: 'pageUrl',
+  userAgent: 'userAgent',
+  telegramChatId: 'telegramChatId',
+  telegramThreadId: 'telegramThreadId',
+  status: 'status',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type ChatSessionScalarFieldEnum = (typeof ChatSessionScalarFieldEnum)[keyof typeof ChatSessionScalarFieldEnum]
+
+
+export const ChatMessageScalarFieldEnum = {
+  id: 'id',
+  chatSessionId: 'chatSessionId',
+  direction: 'direction',
+  text: 'text',
+  telegramMessageId: 'telegramMessageId',
+  errorText: 'errorText',
+  attachmentType: 'attachmentType',
+  attachmentName: 'attachmentName',
+  attachmentMime: 'attachmentMime',
+  attachmentSize: 'attachmentSize',
+  attachmentPath: 'attachmentPath',
+  createdAt: 'createdAt'
+} as const
+
+export type ChatMessageScalarFieldEnum = (typeof ChatMessageScalarFieldEnum)[keyof typeof ChatMessageScalarFieldEnum]
 
 
 export const TagScalarFieldEnum = {
