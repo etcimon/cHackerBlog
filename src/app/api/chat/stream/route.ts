@@ -74,9 +74,11 @@ export async function GET(req: Request) {
   let closed = false;
   let pollInterval: ReturnType<typeof setInterval> | null = null;
   let keepaliveInterval: ReturnType<typeof setInterval> | null = null;
-  let unsubscribe: (() => void) | null = null;
+  let unsubscribe: (() => void | Promise<void>) | null = null;
 
-  const cleanup = () => {
+  const cleanup = async () => {
+    if (closed) return;
+    closed = true;
     if (pollInterval) {
       clearInterval(pollInterval);
       pollInterval = null;
@@ -86,14 +88,14 @@ export async function GET(req: Request) {
       keepaliveInterval = null;
     }
     if (unsubscribe) {
+      const fn = unsubscribe;
+      unsubscribe = null;
       try {
-        unsubscribe();
+        await fn();
       } catch (err) {
         log.error("cleanup unsubscribe error", (err as Error).message);
       }
-      unsubscribe = null;
     }
-    closed = true;
   };
 
   const signal = (req as unknown as { signal?: AbortSignal }).signal;

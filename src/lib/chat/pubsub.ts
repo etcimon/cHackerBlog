@@ -102,12 +102,12 @@ class RedisChatPubSub {
     }
   };
 
-  private onReady = () => {
+  private onReady = async () => {
     this.connected = true;
     this.options?.onReconnect?.();
     // Re-subscribe to every tracked channel (autoResubscribe edge case).
     const channels = [...this.handlers.keys()].map(chatChannel);
-    if (channels.length) this.subscriber.subscribe(...channels).catch(() => {});
+    if (channels.length) await this.subscriber.subscribe(...channels).catch(() => {});
   };
 
   private onDisconnect = () => {
@@ -124,13 +124,13 @@ class RedisChatPubSub {
       await this.subscriber.subscribe(chatChannel(sessionId));
     }
     set.add(handler);
-    return () => {
+    return async () => {
       const s = this.handlers.get(sessionId);
       if (!s) return;
       s.delete(handler);
       if (s.size === 0) {
         this.handlers.delete(sessionId);
-        this.subscriber.unsubscribe(chatChannel(sessionId)).catch(() => {});
+        await this.subscriber.unsubscribe(chatChannel(sessionId)).catch(() => {});
       }
     };
   }
@@ -170,14 +170,14 @@ export async function subscribeChatEvents(
   sessionId: string,
   handler: ChatEventHandler,
   options?: SubscribeOptions,
-): Promise<() => void> {
+): Promise<() => void | Promise<void>> {
   if (await getReadyRedis()) {
     try {
       const subscriber = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
       const sub = new RedisChatPubSub(subscriber, options);
       const unsub = await sub.subscribe(sessionId, handler);
-      return () => {
-        unsub();
+      return async () => {
+        await unsub();
         sub.close();
       };
     } catch (err) {

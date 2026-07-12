@@ -26,6 +26,7 @@
 #        agent-sent photos/videos/docs/audio are downloaded and relayed to the visitor
 # Transport glue:
 #   lib/chat/pubsub.ts   -- Redis pub/sub with in-memory fallback (cross-worker fanout)
+#   lib/chat/redis-lazy.ts -- lazy Redis access: getReadyRedis / isRedisReady / waitForReadyRedis
 #   lib/chat/telegram.ts -- Bot API wrappers (incl. media send/getFile/download) + webhook reg
 #   lib/chat/storage.ts  -- per-session on-disk attachment store (save/read/delete + guards)
 #   lib/chat/db.ts       -- Prisma helpers + DTO mappers
@@ -554,7 +555,20 @@ export async function POST(req) {
 # 4. app/api/chat/stream/route.ts  --  SSE downstream (GET)
 # =============================================================================
 export const dynamic = "force-dynamic";
-const POLL_INTERVAL_MS = 3000;       # intent: DB polling cadence when pub/sub is down
+const POLL_INTERVAL_MS = 3000;       # intent: ACTIVE DB polling cadence when there is no
+                                     # durable cross-worker transport (in-memory bus / Redis
+                                     # down): polling IS the delivery mechanism.
+const RECONCILE_INTERVAL_MS = 5000;  # intent: durable-mode reconciliation BACKSTOP. Even with
+                                     # a healthy Redis subscription, an event can be published
+                                     # while THIS visitor's stream is not yet subscribed: a
+                                     # brand-new chat opens its EventSource only AFTER the first
+                                     # send resolves, so the agent's FIRST reply can race the
+                                     # subscription and hit subscriberCount:0 (dropped on the
+                                     # bus, but persisted in the DB). Without a backstop that
+                                     # first reply stays invisible until a full reconnect re-runs
+                                     # connect-time history — the "first reply never arrives; the
+                                     # second sometimes unblocks it" bug. This slow sweep re-reads
+                                     # history so any gap-dropped message surfaces on its own.
 const KEEPALIVE_INTERVAL_MS = 15000; # intent: comment frames to keep the connection warm
 
 export async function GET(req) {
@@ -591,19 +605,44 @@ export async function GET(req) {
       const sendMessage = (m) => { historyMessageIds.add(m.id); lastMessageCount++; enqueue(`event: message\ndata: ${JSON.stringify(m)}\n\n`); };
       const sendStatus  = (s) => enqueue(`event: status\ndata: ${JSON.stringify(s)}\n\n`);
       const sendHistory = async () => { const msgs = await listChatMessages(session.id); if (msgs.length > lastMessageCount) { /* reset dedupe set + emit full history frame */ } };
+      # intent: cross-worker close detection for the polling/backstop path — a
+      # /close or /end on another worker only persists status + publishes on the
+      # Redis bus, so re-read the row status and emit status:closed once if missed.
+      const checkSessionStatus = async () => { if (closedStatusSent) return; const fresh = await findChatSessionById(session.id); if (fresh?.status === "closed") sendStatus({ sessionId: session.id, status: "closed" }); };
       const handleEvent = (e) => { if (e.type === "message") { if (historyMessageIds.has(e.message.id)) return; sendMessage(e.message); } else if (e.type === "status") sendStatus({ sessionId: e.sessionId, status: e.status }); };
       # intent: buffer events that arrive BEFORE the initial history flush, then
       # replay them so no message is lost in the subscribe/query race window.
       const eventHandler = (e) => { if (!historyLoaded) { pendingEvents.push(e); return; } handleEvent(e); };
-      const startPolling = () => { if (!pollInterval) pollInterval = setInterval(() => sendHistory().catch(...), POLL_INTERVAL_MS); };
-      const stopPolling  = () => { if (pollInterval) { clearInterval(pollInterval); pollInterval = null; } };
+      # intent: SINGLE reconciliation timer whose cadence depends on the transport;
+      # re-invoking with a different interval swaps the cadence in place (does not
+      # stack timers). It runs sendHistory()+checkSessionStatus() so both new
+      # messages AND a missed status:closed are reconciled.
+      let currentPollMs = 0;
+      const startPolling = (intervalMs) => {
+        if (pollInterval && currentPollMs === intervalMs) return;   # already at this cadence
+        if (pollInterval) clearInterval(pollInterval);
+        currentPollMs = intervalMs;
+        pollInterval = setInterval(() => Promise.all([sendHistory(), checkSessionStatus()]).catch(...), intervalMs);
+      };
 
       enqueue(":ok\n\n");   # intent: first byte opens the browser connection
 
-      # intent: subscribe BEFORE the first history read (order matters). Pass
-      # onDisconnect/onReconnect so Redis loss transparently switches to DB polling.
-      unsubscribe = await subscribeChatEvents(session.id, eventHandler, { onDisconnect: startPolling, onReconnect: stopPolling });
-      if (!unsubscribe) startPolling();     # intent: no pub/sub at all -> poll fallback
+      # intent: subscribe BEFORE the first history read (order matters). Redis loss
+      # switches to FAST active polling; recovery RESUMES the slow backstop rather
+      # than stopping entirely (the backstop must keep sweeping to catch the
+      # subscribe-gap drop described at RECONCILE_INTERVAL_MS).
+      unsubscribe = await subscribeChatEvents(session.id, eventHandler, {
+        onDisconnect: () => startPolling(POLL_INTERVAL_MS),
+        onReconnect:  () => startPolling(RECONCILE_INTERVAL_MS),
+      });
+      # intent: durably cross-worker ONLY when there is a truthy unsubscribe AND a
+      # ready Redis (the in-memory bus returns a truthy unsubscribe but cannot see
+      # events from another worker). Durable transport uses the slow reconciliation
+      # backstop; everything else polls fast as the PRIMARY delivery path. Note the
+      # backstop is a no-op whenever the historyMessageIds/lastMessageCount dedupe
+      # shows nothing was missed, so pub/sub stays the real-time path.
+      const durableTransport = Boolean(unsubscribe) && (await isRedisReady());
+      startPolling(durableTransport ? RECONCILE_INTERVAL_MS : POLL_INTERVAL_MS);
       await sendHistory(); historyLoaded = true;
       for (const e of pendingEvents) handleEvent(e); pendingEvents.length = 0;   # intent: flush buffered events
       keepaliveInterval = setInterval(() => enqueue(":keepalive\n\n"), KEEPALIVE_INTERVAL_MS);
@@ -727,10 +766,18 @@ class RedisChatPubSub implements ChatPubSub {
 
 # intent: publish is connection-cheap — reuse the shared client, fall back to the
 # in-memory bus if Redis throws. Safe to call from mutation routes.
+# NOTE (ensureRedis == lib/chat/redis-lazy.ts): the chat subsystem never imports
+# @/lib/redis eagerly. redis-lazy exposes getReadyRedis() (shared client iff
+# status==="ready", else null), isRedisReady(), and waitForReadyRedis(ms) which
+# awaits the "ready" event (bounded) — used by ensureTelegramWebhook so a startup
+# caller doesn't mistake a still-connecting client for "no Redis".
 # NOTE: redis.publish returns the SUBSCRIBER COUNT — log it. `subscriberCount: 0`
 # is the canonical symptom of "message published but nobody was listening yet"
-# (e.g. the very first visitor message published before its EventSource attached
+# (e.g. the agent's FIRST reply published before the visitor's EventSource attached
 # its Redis subscriber). Any value >= 1 means the fanout reached a live stream.
+# Because a dropped publish is NOT re-delivered by the bus, the stream route runs a
+# durable-mode reconciliation backstop (Section 4, RECONCILE_INTERVAL_MS) that
+# re-reads history so a subscriberCount:0 drop still surfaces without a reconnect.
 export async function publishChatEvent(sessionId, event) {
   try { const redis = await ensureRedis();
         if (redis) { const count = await redis.publish(chatChannel(sessionId), JSON.stringify(event));
@@ -759,12 +806,23 @@ export function escapeHtml(text) { /* &<>" -> entities for parse_mode:"HTML" */ 
 
 # intent: single fetch helper with 10s timeout, structured logging, and Telegram
 # ok:false -> ChatTelegramError(TELEGRAM_API_ERROR) / network -> TELEGRAM_NETWORK_ERROR.
-async function telegramFetch<T>(method, body) { /* POST api.telegram.org/bot<token>/<method> */ }
+# The optional `retries` arg (default 0) honors a 429 `parameters.retry_after`:
+# it sleeps for the advertised seconds (capped at MAX_RETRY_AFTER_MS=30s) and
+# retries up to `retries` times. This is what lets webhook registration and
+# forum-topic creation ride out Telegram's global rate limits (e.g. many topics
+# created at once, or a clustered restart hammering setWebhook) instead of
+# failing on the first "Too Many Requests: retry after N".
+async function telegramFetch<T>(method, body, retries=0) { /* POST api.telegram.org/bot<token>/<method>; 429+retry_after -> sleep+retry */ }
 
-export async function createForumTopic(name) { /* createForumTopic; name sliced to 128 */ }
+export async function createForumTopic(name, targetChatId?) { /* createForumTopic; name sliced to 128; retries=3 (bursts of new visitors trip the per-chat topic limit) */ }
 export async function sendMessageToTopic(text, threadId, opts) { /* sendMessage w/ message_thread_id; text sliced to 4096; parse_mode HTML */ }
-export async function setTelegramWebhook(url, secret, allowedUpdates=["message","edited_message"]) { /* setWebhook w/ secret_token */ }
-export async function deleteTelegramWebhook() { /* deleteWebhook */ }
+export async function setTelegramWebhook(url, secret, allowedUpdates=["message","edited_message"]) { /* setWebhook w/ secret_token; retries=3 so a boot-time 429 is ridden out, not dropped */ }
+export async function deleteTelegramWebhook() { /* deleteWebhook (kept for API completeness; ensureTelegramWebhook no longer delete+sets) */ }
+# intent: read the currently-registered webhook so registration can be made
+# IDEMPOTENT (skip setWebhook when the live url+allowed_updates already match).
+# NB: getWebhookInfo does NOT echo the secret, so a secret rotation is detected
+# via the config hash in ensureTelegramWebhook, not here.
+export async function getTelegramWebhookInfo() { /* getWebhookInfo -> { url?, allowed_updates?, pending_update_count?, ... } */ }
 export function validateWebhookSecret(header) { /* compare to TELEGRAM_WEBHOOK_SECRET; if unset, allow (dev) */ }
 export function extractThreadId(message) { /* message_thread_id ?? reply_to_message.message_thread_id */ }
 export function isBotMessage(message) { return message.from?.is_bot ?? false; }
@@ -805,19 +863,51 @@ export async function downloadTelegramFile(filePath) { /* GET file host -> Buffe
 export function extractMedia(message) { /* photo|video|document|audio|voice -> TelegramMediaRef | null */ }
 
 # --- startup webhook registration (Redis-coordinated) ----------------------
-# intent: reads TELEGRAM_WEBHOOK_URL/SECRET/BOT_TOKEN. Uses Redis keys to store a
-# config hash + registered flag + timestamp. Acquires a short NX/EX lock so only
-# ONE clustered worker registers at a time. Re-registers when config changed or
-# the last registration is older than the interval; deletes the stale webhook
-# first. If Redis is down, registers directly (delete+set) without caching state.
-const WEBHOOK_LOCK_TTL_MS = 30000; const WEBHOOK_REREGISTER_INTERVAL_MS = 30000;
+# intent: reads TELEGRAM_WEBHOOK_URL/SECRET/BOT_TOKEN. Registers the webhook on
+# boot from instrumentation.register().
+#
+# THE STARTUP RACE (bug fixed here): register() fires the instant the Node runtime
+# boots, while the eager ioredis client is still `connecting`. A plain getReadyRedis()
+# (status === "ready") therefore returns null at that moment even when Redis is
+# configured and reachable, so the OLD code took the no-Redis branch, logged
+# "(no redis)", and skipped the NX-lock. Under PM2 clustering EVERY worker then hit
+# that branch at once and each called setWebhook -> Telegram "429 Too Many Requests:
+# retry after 1", and the registration was dropped (telegramFetch didn't honor
+# retry_after). FIXES:
+#   1. WAIT (bounded) for Redis to become ready before deciding it's absent, so the
+#      cross-worker NX-lock path is actually used when Redis works.
+#   2. IDEMPOTENT setWebhook: getWebhookInfo first and only setWebhook when the live
+#      url/allowed_updates differ — even if two workers race, the second no-ops, so
+#      the setWebhook rate limit is not tripped (the real clustering safeguard).
+#   3. retry_after handling in setTelegramWebhook (telegramFetch retries=3), and the
+#      Redis state marker is now TTL'd so it "resets" across restarts rather than
+#      persisting forever and masking drift.
+const WEBHOOK_LOCK_KEY = "chat:webhook:lock"; const WEBHOOK_STATE_KEY = "chat:webhook:state";
+const WEBHOOK_STATE_TTL_S = 300; const WEBHOOK_REREGISTER_INTERVAL_MS = 5*60000; const REDIS_READY_WAIT_MS = 5000;
+
+# intent: register ONLY if the live webhook differs (getWebhookInfo diff of
+# url + allowed_updates); if we cannot read current state, fall through and set.
+async function registerWebhookIfNeeded(url, secret, allowedUpdates) {
+  const info = await getTelegramWebhookInfo().catch(()=>null);
+  if (info && info.url === url && sameSet(info.allowed_updates, allowedUpdates)) return;   # already current -> skip
+  await setTelegramWebhook(url, secret, allowedUpdates);
+}
+
 export async function ensureTelegramWebhook() {
   if (!url || !secret || !token) return;   # intent: no-op when unconfigured
   const allowedUpdates = ["message", "edited_message"];   # intent: forum_topic_closed arrives inside "message"
-  const redis = await ensureRedis();
-  if (!redis) { await deleteTelegramWebhook().catch(()=>{}); await setTelegramWebhook(url, secret, allowedUpdates); return; }
-  const lock = await redis.set(WEBHOOK_LOCK_KEY, String(now), "EX", 30, "NX"); if (lock !== "OK") return;   # intent: single-flight
-  # ...compare stored hash + recency; delete old on config change; setWebhook; mset registered state; del lock in finally.
+  const configHash = `${url}|${secret}|${allowedUpdates.join(",")}`;   # secret included -> rotation forces re-set
+  # intent: WAIT for the eager client to finish connecting; treat Redis as absent
+  # only if it never becomes ready (memory driver or genuinely unreachable).
+  const redis = await waitForReadyRedis(REDIS_READY_WAIT_MS);
+  if (!redis) { await registerWebhookIfNeeded(url, secret, allowedUpdates); return; }   # single-process; still idempotent
+  # intent: short NX/EX lock -> only ONE clustered worker registers at a time; the
+  # TTL means a crashed worker's lock auto-expires (never wedged after a restart).
+  const lock = await redis.set(WEBHOOK_LOCK_KEY, String(now), "EX", 30, "NX"); if (lock !== "OK") return;
+  try {
+    # ...read WEBHOOK_STATE_KEY; if hash === configHash AND fresh(< REREGISTER_INTERVAL) -> return (skip redundant check);
+    #    else registerWebhookIfNeeded(...) and set WEBHOOK_STATE_KEY = {hash, at} with EX WEBHOOK_STATE_TTL_S.
+  } finally { await redis.del(WEBHOOK_LOCK_KEY).catch(()=>{}); }
 }
 
 # =============================================================================
@@ -857,6 +947,10 @@ interface ChatSessionDto { id; visitorId; name?; email?; status; createdAt; upda
 type ChatEvent = { type:"message"; message:ChatMessageDto; sessionId } | { type:"status"; status; sessionId };
 # Telegram API shapes: TelegramApiResponse<T>, TelegramForumTopic, TelegramMessage
 #   (note reply_to_message + forum_topic_closed/reopened service fields), TelegramUpdate.
+#   TelegramApiResponse also carries optional `parameters: { retry_after?, migrate_to_chat_id? }`
+#   on failures — retry_after (seconds) accompanies a 429 and drives telegramFetch's retry.
+#   TelegramWebhookInfo = { url?, has_custom_certificate?, pending_update_count?, allowed_updates? }
+#   (from getWebhookInfo; used to make webhook registration idempotent).
 # intent (ATTACHMENTS): TelegramMessage also carries optional media + caption:
 #   photo: TelegramPhotoSize[] (multiple sizes), video: TelegramVideo,
 #   document: TelegramDocument, audio/voice: TelegramAudio.
@@ -871,6 +965,9 @@ type ChatEvent = { type:"message"; message:ChatMessageDto; sessionId } | { type:
 # intent: Next calls register() once when the server boots. Only on the Node.js
 # runtime (not edge) dynamically import the telegram lib and register the webhook;
 # swallow errors so a webhook failure never blocks server startup.
+# NB: this fires while Redis is still connecting — that's fine, ensureTelegramWebhook
+# internally waitForReadyRedis(REDIS_READY_WAIT_MS) so register() stays a simple
+# fire-and-forget; the cluster coordination + idempotency live in the lib, not here.
 export function register() {
   if (process.env.NEXT_RUNTIME === "nodejs")
     import("@/lib/chat/telegram").then((m) => m.ensureTelegramWebhook()).catch(() => {});

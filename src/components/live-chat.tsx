@@ -156,12 +156,15 @@ export default function LiveChat() {
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    fetch("/api/chat/config", { signal: AbortSignal.timeout(8000) })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
+    (async () => {
+      try {
+        const res = await fetch("/api/chat/config", { signal: AbortSignal.timeout(8000) });
+        const data = res.ok ? await res.json() : null;
         if (!cancelled && data && typeof data.enabled === "boolean") setServerEnabled(data.enabled);
-      })
-      .catch(() => {});
+      } catch {
+        // ignore
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -378,10 +381,10 @@ export default function LiveChat() {
     }
   }
 
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+  async function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      await handleSend();
     }
   }
 
@@ -544,7 +547,7 @@ export default function LiveChat() {
                 rows={1}
               />
               <button
-                onClick={handleSend}
+                onClick={async () => { await handleSend(); }}
                 disabled={sendDisabled}
                 className="p-2.5 rounded-full bg-accent text-bg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:scale-105 active:scale-95"
                 aria-label={t("chat.send")}
@@ -566,7 +569,7 @@ export default function LiveChat() {
                 <div className="text-xs text-muted mb-4">{t("chat.closeConfirmBody")}</div>
                 <div className="flex items-center justify-center gap-2">
                   <button
-                    onClick={closeSession}
+                    onClick={async () => { await closeSession(); }}
                     disabled={status === "sending"}
                     className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50"
                   >

@@ -6,8 +6,13 @@
  */
 export function register(): void {
   if (process.env.NEXT_RUNTIME === "nodejs") {
-    import("@/lib/chat/telegram")
-      .then((m) => m.ensureTelegramWebhook())
-      .catch(() => {});
+    (async () => {
+      try {
+        const m = await import("@/lib/chat/telegram");
+        await m.ensureTelegramWebhook();
+      } catch {
+        // no-op: webhook registration is best-effort and should not block startup
+      }
+    })();
   }
 }
