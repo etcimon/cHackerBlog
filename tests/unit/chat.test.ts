@@ -41,6 +41,9 @@ import {
   getTelegramFile,
   downloadTelegramFile,
   sendMediaToTopic,
+  setTelegramWebhook,
+  getTelegramWebhookInfo,
+  ensureTelegramWebhook,
 } from "@/lib/chat/telegram";
 import { publishChatEvent, subscribeChatEvents, chatChannel } from "@/lib/chat/pubsub";
 import { toMessageDto, toSessionDto } from "@/lib/chat/db";
@@ -242,6 +245,88 @@ describe("telegram media transport (fetch mocked)", () => {
     await expect(
       sendMediaToTopic(42, { type: "document", data: new Uint8Array([1]), fileName: "b.bin", mime: "application/octet-stream" }),
     ).rejects.toMatchObject({ code: "TELEGRAM_API_ERROR" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("telegram webhook registration (fetch mocked)", () => {
+  const realFetch = globalThis.fetch;
+  const jsonResponse = (obj: unknown) =>
+    new Response(JSON.stringify(obj), { headers: { "content-type": "application/json" } });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    delete process.env.TELEGRAM_WEBHOOK_URL;
+    delete process.env.TELEGRAM_WEBHOOK_SECRET;
+  });
+
+  it("honors a 429 retry_after then succeeds (setWebhook retries)", async () => {
+    let n = 0;
+    const seen: string[] = [];
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      const u = String(url);
+      seen.push(u);
+      if (u.includes("/setWebhook")) {
+        n += 1;
+        if (n === 1) {
+          return jsonResponse({ ok: false, error_code: 429, description: "Too Many Requests: retry after 1", parameters: { retry_after: 1 } });
+        }
+        return jsonResponse({ ok: true, result: true });
+      }
+      return jsonResponse({ ok: false, description: "unexpected" });
+    }) as typeof fetch;
+
+    await setTelegramWebhook("https://example.com/hook", "s3cr3t", ["message"]);
+    expect(seen.filter((u) => u.includes("/setWebhook")).length).toBe(2);
+  }, 10_000);
+
+  it("ensureTelegramWebhook skips setWebhook when the live webhook already matches", async () => {
+    process.env.TELEGRAM_WEBHOOK_URL = "https://example.com/hook";
+    process.env.TELEGRAM_WEBHOOK_SECRET = "s3cr3t";
+    const seen: string[] = [];
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      const u = String(url);
+      seen.push(u);
+      if (u.includes("/getWebhookInfo")) {
+        return jsonResponse({ ok: true, result: { url: "https://example.com/hook", allowed_updates: ["message", "edited_message"] } });
+      }
+      if (u.includes("/setWebhook")) {
+        return jsonResponse({ ok: true, result: true });
+      }
+      return jsonResponse({ ok: false, description: "unexpected" });
+    }) as typeof fetch;
+
+    // CACHE_DRIVER=memory in this file -> waitForReadyRedis returns null -> direct path.
+    await ensureTelegramWebhook();
+    expect(seen.some((u) => u.includes("/getWebhookInfo"))).toBe(true);
+    expect(seen.some((u) => u.includes("/setWebhook"))).toBe(false);
+  });
+
+  it("ensureTelegramWebhook calls setWebhook when the live url differs", async () => {
+    process.env.TELEGRAM_WEBHOOK_URL = "https://example.com/hook";
+    process.env.TELEGRAM_WEBHOOK_SECRET = "s3cr3t";
+    const seen: string[] = [];
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      const u = String(url);
+      seen.push(u);
+      if (u.includes("/getWebhookInfo")) {
+        return jsonResponse({ ok: true, result: { url: "https://old.example.com/hook", allowed_updates: ["message"] } });
+      }
+      if (u.includes("/setWebhook")) {
+        return jsonResponse({ ok: true, result: true });
+      }
+      return jsonResponse({ ok: false, description: "unexpected" });
+    }) as typeof fetch;
+
+    await ensureTelegramWebhook();
+    expect(seen.some((u) => u.includes("/setWebhook"))).toBe(true);
+  });
+
+  it("getTelegramWebhookInfo returns the current webhook url", async () => {
+    globalThis.fetch = (async () =>
+      jsonResponse({ ok: true, result: { url: "https://example.com/hook", allowed_updates: ["message"] } })) as typeof fetch;
+    const info = await getTelegramWebhookInfo();
+    expect(info.url).toBe("https://example.com/hook");
   });
 });
 

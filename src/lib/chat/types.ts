@@ -63,11 +63,24 @@ export interface TelegramApiResponse<T> {
   result?: T;
   description?: string;
   error_code?: number;
+  /** Present on failures; `retry_after` (seconds) accompanies a 429. */
+  parameters?: {
+    retry_after?: number;
+    migrate_to_chat_id?: number;
+  };
 }
 
 export interface TelegramForumTopic {
   message_thread_id: number;
   name?: string;
+}
+
+/** Subset of the getWebhookInfo result used to decide if a re-set is needed. */
+export interface TelegramWebhookInfo {
+  url?: string;
+  has_custom_certificate?: boolean;
+  pending_update_count?: number;
+  allowed_updates?: string[];
 }
 
 export interface TelegramPhotoSize {

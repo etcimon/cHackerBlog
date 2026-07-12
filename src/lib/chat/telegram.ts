@@ -14,7 +14,7 @@
  * various Telegram media objects into a single TelegramMediaRef.
  */
 import { createLogger } from "@/lib/logger";
-import { getReadyRedis } from "@/lib/chat/redis-lazy";
+import { waitForReadyRedis } from "@/lib/chat/redis-lazy";
 import type {
   ChatAttachmentType,
   OutboundMedia,
@@ -24,6 +24,7 @@ import type {
   TelegramMediaRef,
   TelegramMessage,
   TelegramUpdate,
+  TelegramWebhookInfo,
 } from "@/lib/chat/types";
 
 const log = createLogger("chat:telegram");
@@ -78,31 +79,50 @@ export function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
+/** Cap on how long we will honor a Telegram `retry_after` before giving up. */
+const MAX_RETRY_AFTER_MS = 30_000;
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 /**
  * Single JSON fetch helper: POST api.telegram.org/bot<token>/<method> with a
  * 10s timeout, structured logging, and Telegram ok:false -> TELEGRAM_API_ERROR
  * / network failure -> TELEGRAM_NETWORK_ERROR.
+ *
+ * `retries` (default 0) enables honoring a 429 `retry_after`: the call sleeps
+ * for the advertised seconds (capped at MAX_RETRY_AFTER_MS) and retries, up to
+ * `retries` times. This is what lets webhook registration and forum-topic
+ * creation ride out Telegram's global rate limits (e.g. many topics at once)
+ * instead of failing on the first "Too Many Requests".
  */
-async function telegramFetch<T>(method: string, body: unknown): Promise<T> {
+async function telegramFetch<T>(method: string, body: unknown, retries = 0): Promise<T> {
   const token = requireEnv("TELEGRAM_BOT_TOKEN");
-  let res: Response;
-  try {
-    res = await fetch(`${API_BASE}/bot${token}/${method}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(10_000),
-    });
-  } catch (err) {
-    log.error(`telegram ${method} network error:`, (err as Error).message);
-    throw new ChatTelegramError(`Telegram ${method} network error`, "TELEGRAM_NETWORK_ERROR", undefined, err);
-  }
-  const json = (await res.json().catch(() => ({}))) as TelegramApiResponse<T>;
-  if (!json.ok) {
+  for (let attempt = 0; ; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE}/bot${token}/${method}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch (err) {
+      log.error(`telegram ${method} network error:`, (err as Error).message);
+      throw new ChatTelegramError(`Telegram ${method} network error`, "TELEGRAM_NETWORK_ERROR", undefined, err);
+    }
+    const json = (await res.json().catch(() => ({}))) as TelegramApiResponse<T>;
+    if (json.ok) return json.result as T;
+
+    const retryAfter = json.parameters?.retry_after;
+    if (json.error_code === 429 && typeof retryAfter === "number" && attempt < retries) {
+      const waitMs = Math.min(retryAfter * 1000, MAX_RETRY_AFTER_MS);
+      log.warn(`telegram ${method} rate-limited; retrying in ${Math.round(waitMs / 1000)}s (attempt ${attempt + 1}/${retries})`);
+      await sleep(waitMs);
+      continue;
+    }
     log.warn(`telegram ${method} api error:`, json.description ?? res.status);
     throw new ChatTelegramError(json.description ?? `Telegram ${method} failed`, "TELEGRAM_API_ERROR", json.error_code);
   }
-  return json.result as T;
 }
 
 /**
@@ -111,10 +131,16 @@ async function telegramFetch<T>(method: string, body: unknown): Promise<T> {
  */
 export async function createForumTopic(name: string, targetChatId?: string): Promise<TelegramForumTopic> {
   const chatId = targetChatId ?? getSupportChatId();
-  return telegramFetch<TelegramForumTopic>("createForumTopic", {
-    chat_id: chatId,
-    name: name.slice(0, 128),
-  });
+  // Retry on 429: bursts of new visitors can trip Telegram's per-chat topic
+  // creation limit; honoring retry_after lets many topics be created reliably.
+  return telegramFetch<TelegramForumTopic>(
+    "createForumTopic",
+    {
+      chat_id: chatId,
+      name: name.slice(0, 128),
+    },
+    3,
+  );
 }
 
 /** Send a text message into a forum topic (text sliced to 4096, HTML). */
@@ -176,15 +202,26 @@ export async function setTelegramWebhook(
   secret: string,
   allowedUpdates: string[] = ["message", "edited_message"],
 ): Promise<void> {
-  await telegramFetch("setWebhook", {
-    url,
-    secret_token: secret,
-    allowed_updates: allowedUpdates,
-  });
+  // Retry on 429 so a boot-time rate limit (e.g. clustered restart) is ridden
+  // out rather than silently dropping the registration.
+  await telegramFetch(
+    "setWebhook",
+    {
+      url,
+      secret_token: secret,
+      allowed_updates: allowedUpdates,
+    },
+    3,
+  );
 }
 
 export async function deleteTelegramWebhook(): Promise<void> {
   await telegramFetch("deleteWebhook", {});
+}
+
+/** Read the currently registered webhook so we can skip a redundant setWebhook. */
+export async function getTelegramWebhookInfo(): Promise<TelegramWebhookInfo> {
+  return telegramFetch<TelegramWebhookInfo>("getWebhookInfo", {});
 }
 
 /**
@@ -409,13 +446,54 @@ export function extractMedia(message: TelegramMessage): TelegramMediaRef | null 
 
 const WEBHOOK_LOCK_KEY = "chat:webhook:lock";
 const WEBHOOK_STATE_KEY = "chat:webhook:state";
-const WEBHOOK_REREGISTER_INTERVAL_MS = 30_000;
+// The state marker is a short-lived cache to avoid re-validating on every worker
+// boot within a deploy. A TTL (rather than a persistent key) means the state
+// naturally "resets" after a restart window, so a fresh config check always runs
+// again — without the old code's forever-persisted key that could mask drift.
+const WEBHOOK_STATE_TTL_S = 300;
+const WEBHOOK_REREGISTER_INTERVAL_MS = 5 * 60_000;
+// How long to wait for Redis to finish connecting before assuming it's absent.
+const REDIS_READY_WAIT_MS = 5_000;
+
+const allowedUpdatesEqual = (a: string[] = [], b: string[] = []): boolean => {
+  if (a.length !== b.length) return false;
+  const sa = [...a].sort();
+  const sb = [...b].sort();
+  return sa.every((v, i) => v === sb[i]);
+};
 
 /**
- * Register the Telegram webhook on server startup. Uses Redis keys to store a
- * config hash + timestamp and a short NX lock so only ONE clustered worker
- * registers at a time; re-registers when the config changed or the last
- * registration is stale. If Redis is unavailable, registers directly.
+ * Register the webhook ONLY if the live one differs. Calls getWebhookInfo first
+ * and compares the url + allowed_updates; if they already match, setWebhook is
+ * skipped entirely. This is the core clustering safeguard: even if two workers
+ * reach this concurrently, the second sees the first's registration and no-ops,
+ * so Telegram's setWebhook rate limit is not tripped. (getWebhookInfo does not
+ * echo the secret, so a config hash — see below — forces a re-set on rotation.)
+ */
+async function registerWebhookIfNeeded(url: string, secret: string, allowedUpdates: string[]): Promise<void> {
+  try {
+    const info = await getTelegramWebhookInfo();
+    if (info.url === url && allowedUpdatesEqual(info.allowed_updates, allowedUpdates)) {
+      log.info("telegram webhook already current; skipping setWebhook");
+      return;
+    }
+  } catch (err) {
+    // Could not read current state (e.g. transient error) — fall through and set.
+    log.warn("getWebhookInfo failed; setting webhook unconditionally:", (err as Error).message);
+  }
+  await setTelegramWebhook(url, secret, allowedUpdates);
+  log.info("telegram webhook registered");
+}
+
+/**
+ * Register the Telegram webhook on server startup.
+ *
+ * Waits (bounded) for Redis to become ready so clustered workers coordinate via
+ * a short NX lock instead of every worker racing to setWebhook (which trips
+ * Telegram's 429 rate limit). A config-hash + timestamp state marker (TTL'd, so
+ * it resets across restarts) short-circuits redundant checks, and the actual
+ * setWebhook is gated behind a getWebhookInfo diff so it only fires when needed.
+ * If Redis is genuinely unavailable, registers directly (idempotent via the diff).
  */
 export async function ensureTelegramWebhook(): Promise<void> {
   const url = process.env.TELEGRAM_WEBHOOK_URL;
@@ -424,17 +502,20 @@ export async function ensureTelegramWebhook(): Promise<void> {
   if (!url || !secret || !token) return; // no-op when unconfigured
 
   const allowedUpdates = ["message", "edited_message"]; // forum_topic_closed arrives inside "message"
-  const configHash = `${url}|${allowedUpdates.join(",")}`;
+  const configHash = `${url}|${secret}|${allowedUpdates.join(",")}`;
 
-  const redis = await getReadyRedis();
+  // Wait for the eager client to finish connecting; only treat Redis as absent
+  // if it never becomes ready (memory driver or genuinely unreachable).
+  const redis = await waitForReadyRedis(REDIS_READY_WAIT_MS);
   if (!redis) {
-    await deleteTelegramWebhook().catch(() => {});
-    await setTelegramWebhook(url, secret, allowedUpdates);
-    log.info("telegram webhook registered (no redis)");
+    await registerWebhookIfNeeded(url, secret, allowedUpdates);
+    log.info("telegram webhook checked (no redis)");
     return;
   }
 
   const now = Date.now();
+  // Short NX lock: only one worker registers at a time. The TTL means a crashed
+  // worker's lock auto-expires, so registration is never wedged after a restart.
   const lock = await redis.set(WEBHOOK_LOCK_KEY, String(now), "EX", 30, "NX");
   if (lock !== "OK") return; // another worker is handling it
 
@@ -444,10 +525,8 @@ export async function ensureTelegramWebhook(): Promise<void> {
     const fresh = state?.at ? now - state.at < WEBHOOK_REREGISTER_INTERVAL_MS : false;
     if (state?.hash === configHash && fresh) return;
 
-    await deleteTelegramWebhook().catch(() => {});
-    await setTelegramWebhook(url, secret, allowedUpdates);
-    await redis.set(WEBHOOK_STATE_KEY, JSON.stringify({ hash: configHash, at: now }));
-    log.info("telegram webhook registered");
+    await registerWebhookIfNeeded(url, secret, allowedUpdates);
+    await redis.set(WEBHOOK_STATE_KEY, JSON.stringify({ hash: configHash, at: now }), "EX", WEBHOOK_STATE_TTL_S);
   } finally {
     await redis.del(WEBHOOK_LOCK_KEY).catch(() => {});
   }
