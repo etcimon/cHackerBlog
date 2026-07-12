@@ -397,17 +397,17 @@ export default function LiveChat() {
   const sendDisabled = isClosed || status === "sending" || (!input.trim() && !attachment);
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 flex flex-col items-end gap-3">
+    <div className="fixed bottom-3 right-3 sm:bottom-4 sm:right-4 z-50 flex flex-col items-end gap-2 sm:gap-3">
       {(isOpen || hasAnimation) && (
         <div
-          className={`relative w-80 sm:w-96 max-h-[70vh] bg-card text-fg rounded-2xl shadow-2xl border border-border flex flex-col overflow-hidden transition-all duration-300 ease-out origin-bottom-right ${
+          className={`relative w-[calc(100vw-1.5rem)] max-w-sm sm:w-96 sm:max-w-none max-h-[80vh] sm:max-h-[70vh] bg-card text-fg rounded-2xl shadow-2xl border border-border flex flex-col overflow-hidden transition-all duration-300 ease-out origin-bottom-right ${
             isOpen
               ? "opacity-100 translate-y-0 scale-100 pointer-events-auto"
               : "opacity-0 translate-y-4 scale-95 pointer-events-none"
           }`}
         >
           {/* Header */}
-          <div className="bg-accent text-bg p-4 flex items-center justify-between">
+          <div className="bg-accent text-bg p-3 sm:p-4 flex items-center justify-between">
             <div>
               <div className="font-semibold text-sm">{t("chat.title")}</div>
               <div className="text-xs opacity-80">{t("chat.subtitle")}</div>
@@ -529,10 +529,10 @@ export default function LiveChat() {
                   <button
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isClosed || status === "sending"}
-                    className="p-2.5 rounded-full text-muted hover:text-accent hover:bg-accent/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    className="shrink-0 p-2 rounded-full text-muted hover:text-accent hover:bg-accent/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     aria-label={t("chat.attach")}
                   >
-                    <Paperclip size={18} />
+                    <Paperclip size={16} />
                   </button>
                 </>
               )}
@@ -549,13 +549,13 @@ export default function LiveChat() {
               <button
                 onClick={async () => { await handleSend(); }}
                 disabled={sendDisabled}
-                className="p-2.5 rounded-full bg-accent text-bg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:scale-105 active:scale-95"
+                className="shrink-0 p-2 rounded-full bg-accent text-bg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:scale-105 active:scale-95"
                 aria-label={t("chat.send")}
               >
                 {status === "sending" ? (
-                  <Loader2 size={18} className="animate-spin" />
+                  <Loader2 size={16} className="animate-spin" />
                 ) : (
-                  <Send size={18} />
+                  <Send size={16} />
                 )}
               </button>
             </div>
@@ -591,12 +591,21 @@ export default function LiveChat() {
       {/* Floating bubble */}
       <button
         onClick={() => (isOpen ? handleClose() : setIsOpen(true))}
-        className="group relative w-14 h-14 rounded-full bg-accent text-bg shadow-lg flex items-center justify-center transition-all duration-300 hover:scale-110 hover:shadow-xl focus:outline-none focus:ring-4 focus:ring-accent/30"
+        className="group relative w-11 h-11 sm:w-14 sm:h-14 rounded-full bg-accent text-bg shadow-lg flex items-center justify-center transition-all duration-300 hover:scale-110 hover:shadow-xl focus:outline-none focus:ring-4 focus:ring-accent/30"
         aria-label={isOpen ? t("chat.closeChat") : t("chat.openChat")}
       >
-        {isOpen ? <X size={22} /> : <MessageCircle size={22} />}
+        {isOpen ? (
+          <X size={18} className="sm:hidden" />
+        ) : (
+          <MessageCircle size={18} className="sm:hidden" />
+        )}
+        {isOpen ? (
+          <X size={22} className="hidden sm:block" />
+        ) : (
+          <MessageCircle size={22} className="hidden sm:block" />
+        )}
         {!isOpen && unread > 0 && (
-          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center border-2 border-card animate-bounce">
+          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] sm:text-xs font-bold w-4 h-4 sm:w-5 sm:h-5 rounded-full flex items-center justify-center border-2 border-card animate-bounce">
             {unread}
           </span>
         )}
