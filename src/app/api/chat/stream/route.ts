@@ -33,7 +33,18 @@ import { createLogger } from "@/lib/logger";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// Active fallback cadence when there is NO durable cross-worker transport
+// (in-memory bus / Redis down): polling IS the delivery mechanism.
 const POLL_INTERVAL_MS = 3000;
+// Durable-mode reconciliation backstop. Even with a healthy Redis subscription,
+// an event can be published while this visitor's stream is not yet subscribed
+// (a brand-new chat subscribes only AFTER the first send, so the agent's first
+// reply can race the subscription and hit subscriberCount:0). Pub/sub delivers
+// in real time for the common case; this slower sweep re-reads history so any
+// gap-dropped message surfaces on its own instead of needing a second message
+// or a full reconnect. The historyMessageIds/lastMessageCount dedupe makes it a
+// no-op whenever nothing was missed.
+const RECONCILE_INTERVAL_MS = 5000;
 const KEEPALIVE_INTERVAL_MS = 15000;
 
 const log = createLogger("api:chat:stream");
@@ -149,31 +160,35 @@ export async function GET(req: Request) {
         handleEvent(e);
       };
 
-      const startPolling = () => {
-        if (!pollInterval) {
-          pollInterval = setInterval(() => {
-            void Promise.all([sendHistory(), checkSessionStatus()]).catch(() => {});
-          }, POLL_INTERVAL_MS);
-        }
-      };
-      const stopPolling = () => {
-        if (pollInterval) {
-          clearInterval(pollInterval);
-          pollInterval = null;
-        }
+      // Single reconciliation timer whose cadence depends on the transport:
+      // POLL_INTERVAL_MS when polling is the actual delivery mechanism, the
+      // slower RECONCILE_INTERVAL_MS backstop when Redis pub/sub is healthy.
+      // Re-invoking with a different interval swaps the cadence in place.
+      let currentPollMs = 0;
+      const startPolling = (intervalMs: number) => {
+        if (pollInterval && currentPollMs === intervalMs) return;
+        if (pollInterval) clearInterval(pollInterval);
+        currentPollMs = intervalMs;
+        pollInterval = setInterval(() => {
+          void Promise.all([sendHistory(), checkSessionStatus()]).catch(() => {});
+        }, intervalMs);
       };
 
       enqueue(":ok\n\n");
 
       unsubscribe = await subscribeChatEvents(session.id, eventHandler, {
-        onDisconnect: startPolling,
-        onReconnect: stopPolling,
+        // Redis dropped: fall back to fast active polling for real delivery.
+        onDisconnect: () => startPolling(POLL_INTERVAL_MS),
+        // Redis back: resume the slower reconciliation backstop (do NOT stop —
+        // the backstop must keep sweeping to catch subscribe-gap drops).
+        onReconnect: () => startPolling(RECONCILE_INTERVAL_MS),
       });
-      // Poll unless the transport is durably cross-worker (a real, ready Redis
-      // subscription). The in-memory bus returns a truthy unsubscribe but cannot
-      // see events published on another worker, so it MUST keep polling.
+      // Durably cross-worker only when there's a truthy unsubscribe AND a ready
+      // Redis (the in-memory bus returns a truthy unsubscribe but cannot see
+      // events from another worker). Durable transport uses the slow backstop;
+      // everything else polls fast as the primary delivery path.
       const durableTransport = Boolean(unsubscribe) && (await isRedisReady());
-      if (!durableTransport) startPolling();
+      startPolling(durableTransport ? RECONCILE_INTERVAL_MS : POLL_INTERVAL_MS);
 
       await sendHistory();
       historyLoaded = true;
