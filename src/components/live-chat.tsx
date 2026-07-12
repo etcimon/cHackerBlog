@@ -529,10 +529,10 @@ export default function LiveChat() {
                   <button
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isClosed || status === "sending"}
-                    className="shrink-0 p-2 rounded-full text-muted hover:text-accent hover:bg-accent/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    className="shrink-0 p-2 sm:p-2.5 rounded-full text-muted hover:text-accent hover:bg-accent/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     aria-label={t("chat.attach")}
                   >
-                    <Paperclip size={16} />
+                    <Paperclip size={16} className="sm:w-[18px] sm:h-[18px]" />
                   </button>
                 </>
               )}
@@ -543,19 +543,19 @@ export default function LiveChat() {
                 onKeyDown={handleKeyDown}
                 disabled={isClosed}
                 placeholder={isClosed ? t("chat.chatClosedPlaceholder") : t("chat.messagePlaceholder")}
-                className="flex-1 resize-none max-h-32 min-h-[2.5rem] px-3 py-2 text-sm rounded-xl border border-border bg-bg text-fg placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-1 min-w-0 resize-none max-h-32 min-h-[2.5rem] px-3 py-2 text-sm rounded-xl border border-border bg-bg text-fg placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
                 rows={1}
               />
               <button
                 onClick={async () => { await handleSend(); }}
                 disabled={sendDisabled}
-                className="shrink-0 p-2 rounded-full bg-accent text-bg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:scale-105 active:scale-95"
+                className="shrink-0 p-2 sm:p-2.5 rounded-full bg-accent text-bg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:scale-105 active:scale-95"
                 aria-label={t("chat.send")}
               >
                 {status === "sending" ? (
-                  <Loader2 size={16} className="animate-spin" />
+                  <Loader2 size={16} className="animate-spin sm:w-[18px] sm:h-[18px]" />
                 ) : (
-                  <Send size={16} />
+                  <Send size={16} className="sm:w-[18px] sm:h-[18px]" />
                 )}
               </button>
             </div>
