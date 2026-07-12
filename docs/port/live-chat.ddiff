@@ -1179,6 +1179,20 @@ export async function GET(req, { params }) {
 #   req.signal instead of calling cancel(), leaking a Redis subscriber + intervals
 #   on every page reload. FIX: shared cleanup() wired to both cancel() and
 #   req.signal "abort" (section 4).
+# [CLUSTER-INMEM-PUBSUB] The in-memory pub/sub bus is PROCESS-LOCAL, so under PM2
+#   cluster (exec_mode "cluster", instances "max") a Telegram webhook landing on
+#   worker A published to A's memory bus while the visitor's SSE stream on worker
+#   B was subscribed only to B's memory bus — the reply was SILENTLY LOST. The
+#   stream only started DB polling `if (!unsubscribe)`, but subscribeChatEvents
+#   returns the (truthy) memory unsubscribe when Redis is down, so polling never
+#   engaged. FIX (section 4): start polling whenever the transport is not DURABLE
+#   — `durableTransport = Boolean(unsubscribe) && isRedisReady()`; if false,
+#   startPolling(). Also added checkSessionStatus() to the poll (re-reads session
+#   status and synthesizes the `closed` event once) so a cross-worker close still
+#   reaches the client when Redis is unavailable. Redis remains REQUIRED for
+#   real-time cross-worker delivery; polling is the durable degraded path. The
+#   in-memory REGISTRY has no DB fallback, so multi-worker /start sharing requires
+#   Redis (degrades gracefully to the env chat-id fallback, not an outage).
 
 # =============================================================================
 # FEATURES ADDED (for changelog/reference)
@@ -1197,3 +1211,100 @@ export async function GET(req, { params }) {
 #   never hides the visitor's own upload (recorded via errorText instead); (3) paths
 #   keyed on the stable session id, never the rotating visitorId; (4) the client
 #   flag is presentational only — the server re-checks the same predicate.
+# [MULTI-GROUP-ROUND-ROBIN] The single hardcoded TELEGRAM_SUPPORT_CHAT_ID is now a
+#   FALLBACK. Support groups register themselves at runtime via chat commands and
+#   new visitor chats are distributed round-robin across them. Each session still
+#   gets its OWN forum topic inside the chosen group (so telegramThreadId stays
+#   unique and session resolution is unchanged). Also: leaving the chat in the
+#   frontend now closes the Telegram forum topic. See section 15 below.
+#   KEY DECISIONS: (1) round-robin unit is the GROUP (chatId); per-session topics
+#   are unchanged. (2) A Redis registry (chat:groups hash + chat:groups:cursor +
+#   chat:groups:initialized) is authoritative once ANY group runs /start; before
+#   that the env chat id is the fallback; after init an empty list DISABLES chat.
+#   (3) Commands are group-level and handled BEFORE session lookup in the webhook;
+#   /close remains per-session. (4) send/media helpers gained an optional
+#   targetChatId (env fallback) so existing call sites + tests are unchanged.
+#   (5) In-memory fallback mirrors the attachment/pubsub pattern when Redis is off.
+
+# =============================================================================
+# 15. MULTI-GROUP ROUND-ROBIN DISPATCH + TOPIC CLOSE-ON-LEAVE
+# =============================================================================
+# intent: turn the one-group model into a self-service pool of Telegram support
+# groups that admins manage with in-chat commands, distribute new conversations
+# round-robin, and mirror a frontend "leave" into a Telegram topic close.
+#
+# --- lib/chat/registry.ts (NEW) --------------------------------------------
+# Redis-backed round-robin registry with a single-process in-memory fallback.
+# KEYS: chat:groups (hash chatId->JSON{title,paused,registeredAt}),
+#       chat:groups:cursor (INCR per dispatch), chat:groups:initialized ("1").
+#   registerGroup(chatId,title?)  -> HSET (unpauses, preserves registeredAt) +
+#                                     set initialized=1. First call overrides env.
+#   pauseGroup(chatId)            -> mark paused (kept in list, skipped for new).
+#   removeGroup(chatId)           -> HDEL.
+#   listGroups()/getGroup(id)     -> read.
+#   canDispatch()                 -> PEEK: any non-paused group? else if never
+#                                     initialized fall back to TELEGRAM_SUPPORT_CHAT_ID;
+#                                     else false (empty/all-paused => disabled).
+#   selectDispatchChatId()        -> CONSUME: stable-sort active by
+#                                     (registeredAt,chatId), pick cursor%len (INCR),
+#                                     else env fallback (pre-init), else {disabled}.
+#   resetRegistryForTests()       -> clears in-memory state for suite isolation.
+#
+# --- lib/chat/telegram.ts (CHANGED) ----------------------------------------
+#   createForumTopic(name, targetChatId?)            } targetChatId defaults to
+#   sendMessageToTopic(text, threadId, targetChatId?, options?)  } getSupportChatId()
+#   sendMediaToTopic(threadId, media, targetChatId?) } (env) — back-compatible.
+#   + sendPlainMessage(chatId, text, threadId?)  -> command replies (HTML).
+#   + closeForumTopic(chatId, threadId)          -> Telegram closeForumTopic.
+#   + parseGroupCommand(text): "start"|"pause"|"end"|null — strips @mention,
+#       case-insensitive, trims; returns null for /close and everything else.
+#   TelegramMessage.chat gains optional `title` (used to label a registered group).
+#
+# --- app/api/chat/telegram/route.ts (CHANGED) ------------------------------
+#   After isBotMessage and BEFORE session lookup: parseGroupCommand(text); if set,
+#   handleGroupCommand(cmd, message) (operates on message.chat.id, replies in the
+#   same thread), always acks 200:
+#     start -> registerGroup(chatId, chat.title); reply active-group count.
+#     pause -> pauseGroup(chatId); reply (or hint to /start if unregistered).
+#     end   -> for each open session in the group: closeChatSession +
+#              deleteSessionFiles + closeForumTopic + publish status:closed;
+#              then removeGroup(chatId); reply (note "disabled" when list empty).
+#   The per-session /close path additionally calls closeForumTopic when the agent
+#   typed /close (skipped when forum_topic_closed already closed it).
+#
+# --- app/api/chat/send/route.ts (CHANGED) ----------------------------------
+#   ensureTopic() now: selectDispatchChatId() -> throw CHAT_DISABLED if disabled,
+#   else createForumTopic(name, target.chatId) and record chatId+thread on the
+#   session. Before creating a topic for a NEW session, both handleText and
+#   handleUpload return 403 "Live chat is currently unavailable." when
+#   !canDispatch(). Outbound sends pass session.telegramChatId as targetChatId so
+#   replies route to the SAME group the topic lives in.
+#
+# --- app/api/chat/close/route.ts (CHANGED) ---------------------------------
+#   After marking closed + deleting files, best-effort closeForumTopic(
+#   telegramChatId, telegramThreadId) so a frontend "leave" ends the Telegram
+#   topic too (failure is logged, never fails the visitor's close).
+#
+# --- app/api/chat/config/route.ts (NEW) ------------------------------------
+#   GET -> { enabled: NEXT_PUBLIC_LIVE_CHAT_ENABLED!=="false" && await canDispatch() }.
+#   Rate-limited by the new "chat.config" bucket. On registry error, falls back to
+#   the env flag (a Redis blip must not hide the widget).
+#
+# --- components/LiveChat.tsx (CHANGED) -------------------------------------
+#   On mount, fetch /api/chat/config -> serverEnabled (default true). Render guard:
+#   `if (!enabled) return null; if (!serverEnabled && !session) return null;` so the
+#   launcher hides when no group accepts chats, but an in-progress session (held in
+#   memory) is never yanked away.
+#
+# --- lib/chat/db.ts (CHANGED) ----------------------------------------------
+#   + listOpenChatSessionsByChatId(telegramChatId): open sessions in a group (for /end).
+#
+# --- db mock note ----------------------------------------------------------
+#   tests/chat.test.ts's "@/lib/chat/db" mock must also export
+#   listOpenChatSessionsByChatId (the webhook now imports it at module load).
+#
+# --- tests/chat-registry.test.ts (NEW) -------------------------------------
+#   Redis mocked off (in-memory). parseGroupCommand table + round-robin lifecycle:
+#   env fallback pre-init -> register A,B -> A,B,A,B -> pause A -> B only (still
+#   listed) -> re-register A unpauses -> remove all -> disabled even with env set.
+#   Calls resetRegistryForTests() up front + in afterAll for cross-file isolation.

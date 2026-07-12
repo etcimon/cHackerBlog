@@ -13,7 +13,11 @@ import {
   toSessionDto,
 } from "@/lib/chat/db";
 import { deleteSessionFiles } from "@/lib/chat/storage";
+import { closeForumTopic } from "@/lib/chat/telegram";
 import { publishChatEvent } from "@/lib/chat/pubsub";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api:chat:close");
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,6 +37,12 @@ export async function POST(req: Request) {
 
     const updated = await closeChatSessionByVisitorId(visitorId);
     await deleteSessionFiles(updated.id);
+    // Mirror the leave into Telegram by closing the forum topic (best-effort).
+    if (updated.telegramChatId && updated.telegramThreadId) {
+      await closeForumTopic(updated.telegramChatId, updated.telegramThreadId).catch((err) => {
+        log.warn("failed to close telegram topic on visitor close:", (err as Error).message);
+      });
+    }
     await publishChatEvent(updated.id, {
       type: "status",
       sessionId: updated.id,

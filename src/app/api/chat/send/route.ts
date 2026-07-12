@@ -37,6 +37,7 @@ import {
   saveChatFile,
 } from "@/lib/chat/storage";
 import { publishChatEvent } from "@/lib/chat/pubsub";
+import { canDispatch, selectDispatchChatId } from "@/lib/chat/registry";
 import { randomUUID } from "node:crypto";
 import { createLogger } from "@/lib/logger";
 
@@ -96,18 +97,25 @@ async function findOrCreateSession(ctx: SessionContext) {
   return session!;
 }
 
-/** Lazily create ONE forum topic per session; throws ChatTelegramError. */
-async function ensureTopic<T extends { id: string; telegramThreadId: number | null; name: string | null; visitorId: string }>(
-  session: T,
-) {
+/**
+ * Lazily create ONE forum topic per session inside a ROUND-ROBIN-selected group.
+ * selectDispatchChatId() advances the cursor and returns the target group (or
+ * the env fallback pre-init); when it reports `disabled` (registry initialized
+ * but empty) we throw CHAT_DISABLED. The chosen group id is persisted on the
+ * session so every later outbound send targets the same group. Throws
+ * ChatTelegramError.
+ */
+async function ensureTopic<
+  T extends { id: string; telegramThreadId: number | null; name: string | null; visitorId: string },
+>(session: T) {
   if (session.telegramThreadId) return session;
+  const target = await selectDispatchChatId();
+  if (target.disabled || !target.chatId) {
+    throw new ChatTelegramError("Live chat is currently unavailable.", "CHAT_DISABLED");
+  }
   const topicName = `Chat: ${session.name ?? session.visitorId.slice(0, 8)}`;
-  const topic = await createForumTopic(topicName);
-  const updated = await updateChatSessionThread(
-    session.id,
-    process.env.TELEGRAM_SUPPORT_CHAT_ID ?? "",
-    topic.message_thread_id,
-  );
+  const topic = await createForumTopic(topicName, target.chatId);
+  const updated = await updateChatSessionThread(session.id, target.chatId, topic.message_thread_id);
   return updated as unknown as T;
 }
 
@@ -143,6 +151,11 @@ async function handleText(req: Request, ip: string) {
   });
   if (session.status === "closed") {
     return fail(new AppError("This chat session has been closed.", 422, "VALIDATION_ERROR"));
+  }
+  // Gate NEW conversations when no group can receive them (registry empty after
+  // init, no env fallback). Existing sessions with a topic are never blocked.
+  if (!session.telegramThreadId && !(await canDispatch())) {
+    return fail(Errors.forbidden("Live chat is currently unavailable."));
   }
 
   const hadTopic = Boolean(session.telegramThreadId);
@@ -183,7 +196,9 @@ async function handleText(req: Request, ip: string) {
 
   let telegramMessageId: number | undefined;
   try {
-    telegramMessageId = (await sendMessageToTopic(telegramText, session.telegramThreadId!)).message_id;
+    telegramMessageId = (
+      await sendMessageToTopic(telegramText, session.telegramThreadId!, session.telegramChatId ?? undefined)
+    ).message_id;
   } catch (err) {
     log.warn("telegram send failed:", (err as Error).message);
   }
@@ -245,6 +260,9 @@ async function handleUpload(req: Request, ip: string) {
   if (session.status === "closed") {
     return fail(new AppError("This chat session has been closed.", 422, "VALIDATION_ERROR"));
   }
+  if (!session.telegramThreadId && !(await canDispatch())) {
+    return fail(Errors.forbidden("Live chat is currently unavailable."));
+  }
 
   const bytes = new Uint8Array(await file.arrayBuffer());
   const mime = file.type || "application/octet-stream";
@@ -259,13 +277,17 @@ async function handleUpload(req: Request, ip: string) {
   try {
     session = await ensureTopic(session);
     telegramMessageId = (
-      await sendMediaToTopic(session.telegramThreadId!, {
-        type: attachmentType,
-        data: bytes,
-        fileName,
-        mime,
-        caption: caption || undefined,
-      })
+      await sendMediaToTopic(
+        session.telegramThreadId!,
+        {
+          type: attachmentType,
+          data: bytes,
+          fileName,
+          mime,
+          caption: caption || undefined,
+        },
+        session.telegramChatId ?? undefined,
+      )
     ).message_id;
   } catch (err) {
     sendError = err instanceof ChatTelegramError ? err : null;

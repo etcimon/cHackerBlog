@@ -19,6 +19,7 @@
 - [SEO & Sharing](#seo--sharing)
 - [Internationalization & Translation](#internationalization--translation)
 - [Custom Embeds & Media](#custom-embeds--media)
+- [Live Chat](#live-chat)
 - [Tech Stack](#tech-stack)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
@@ -37,6 +38,7 @@
 - **SEO & sharing** — crawlable `/article/<slug>` routes with Open Graph / Twitter Card / canonical metadata, plus credential-free social share links.
 - **Comments** — reader comments with moderation, spam detection, and age verification.
 - **Social auto-posting** — optional auto-posting of new articles to X (Twitter) and LinkedIn.
+- **Live chat** — a Telegram-relayed support widget with bidirectional attachments, real-time SSE delivery, and multi-group round-robin routing managed by in-chat commands.
 - **Production-ready** — Redis-backed multi-level caching, Cloudflare-aware rate limiting, bcrypt admin auth with HMAC-signed cookies, and PM2 clustering. SQLite for dev, PostgreSQL for prod.
 
 ## SEO & Sharing
@@ -85,6 +87,21 @@ Embed files, media, and external URLs with the `@[name](url)` grammar. Sizes rou
 ```
 
 Rich embeds are auto-rendered for YouTube / YouTube Music, Vimeo, Rumble, Twitch, X (Twitter), Facebook, Instagram, and SoundCloud. Unrecognized URLs render a link-preview card (Open Graph metadata, site name, "Visit site").
+
+## Live Chat
+
+An optional floating support widget relays visitor conversations to Telegram and streams agent replies back to the browser in real time over Server-Sent Events. Each conversation gets its own Telegram **forum topic**, and messages carry **bidirectional attachments** (images/video/audio/documents) — visitor uploads are stored on disk and relayed, agent media is downloaded and served through an authenticated per-conversation route. When Redis is unavailable the widget degrades gracefully to an in-memory bus plus DB polling (so replies still arrive across PM2 workers).
+
+**Multi-group round-robin.** Support teams register groups from within Telegram, and new chats are distributed round-robin across the active groups:
+
+- `/start` — register the group (and unpause it) to start receiving chats.
+- `/pause` — stop routing *new* chats here; existing conversations continue.
+- `/end` — close every open chat in the group and unregister it.
+- `/close` — (in a conversation's topic) end that single conversation.
+
+The single `TELEGRAM_SUPPORT_CHAT_ID` is only a fallback used until the first `/start`; once any group registers, an empty registry disables the widget. Requires Redis for the shared registry across workers.
+
+**Setup:** set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_SUPPORT_CHAT_ID` (a supergroup with topics enabled), and — for real-time delivery in production — a public `TELEGRAM_WEBHOOK_URL` + `TELEGRAM_WEBHOOK_SECRET` (the webhook auto-registers on server startup). Hide the widget with `NEXT_PUBLIC_LIVE_CHAT_ENABLED=false`; disable uploads with `NEXT_PUBLIC_LIVE_CHAT_ATTACHMENTS_ENABLED=false` (re-checked server-side). All Telegram vars are optional — when unset the relay no-ops and messages persist with a delivery-error badge.
 
 ## Tech Stack
 
@@ -143,6 +160,7 @@ All configuration is via environment variables, validated at startup by Zod (`sr
 | `THEME` / `CODE_THEME` | Theme preset and highlight.js stylesheet |
 | `GROK_*` | Optional article translation via x.ai |
 | `SOCIAL_AUTOPOST_ENABLED`, `X_*`, `LINKEDIN_*` | Optional social auto-posting |
+| `TELEGRAM_*` / `CHAT_*` / `NEXT_PUBLIC_LIVE_CHAT_*` | Optional Telegram-relayed live chat (see [Live Chat](#live-chat)) |
 | `SMTP_*` / `MAIL_FROM` | Optional email |
 | `UPLOAD_DIR` / `UPLOAD_MAX_SIZE` | Uploads (size supports `K`/`M`/`G`) |
 | `COMMENTS_ENABLED` / `DISABLE_I18N` | Feature toggles |
@@ -227,6 +245,12 @@ Responses use a unified envelope: `{ ok: true, data }` on success, or an error o
 | `GET` / `PUT /api/legal/[slug]` | Legal page (privacy, terms) | PUT: admin |
 | `POST /api/upload` | Image upload | admin |
 | `GET /api/link-preview` | Fetch link metadata for embeds | — |
+| `GET /api/chat/config` | Live-chat availability (`{ enabled }`) | — |
+| `POST /api/chat/send` | Send a chat message (JSON) or attachment (multipart) | — |
+| `GET /api/chat/stream?visitorId=…` | SSE history + live message/status events | — |
+| `POST /api/chat/close` | Close the visitor's chat session | — |
+| `GET /api/chat/attachments/[id]?visitorId=…` | Authenticated attachment bytes | — |
+| `POST /api/chat/telegram` | Telegram webhook (agent replies / commands) | secret |
 
 Example feed item shape:
 

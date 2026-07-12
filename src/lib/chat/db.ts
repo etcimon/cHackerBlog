@@ -68,6 +68,16 @@ export async function findChatSessionByThreadId(threadId: number) {
   return prisma.chatSession.findFirst({ where: { telegramThreadId: threadId } });
 }
 
+/** All still-open sessions routed to a given support group (for /end cleanup). */
+export async function listOpenChatSessionsByChatId(telegramChatId: string) {
+  try {
+    return await prisma.chatSession.findMany({ where: { telegramChatId, status: "open" } });
+  } catch (err) {
+    log.error("listOpenChatSessionsByChatId:", (err as Error).message);
+    throw err;
+  }
+}
+
 export async function findChatSessionByTelegramMessageId(messageId: number) {
   const msg = await prisma.chatMessage.findFirst({
     where: { telegramMessageId: messageId },

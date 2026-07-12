@@ -2946,6 +2946,401 @@ REDIS_URL=redis://127.0.0.1:6379
 #   bun test tests/chat-attachments.test.ts
 
 # =============================================================================
+# 19. MULTI-GROUP ROUND-ROBIN DISPATCH + TOPIC CLOSE-ON-LEAVE (FULL SOURCE)
+# =============================================================================
+# intent: multiple Telegram support groups register themselves via in-chat
+# commands (/start /pause /end); new visitor chats are distributed round-robin
+# across the registered groups (each session still gets its OWN forum topic in
+# the chosen group). The single TELEGRAM_SUPPORT_CHAT_ID becomes a fallback used
+# only until the registry is initialized; once initialized, an empty registry
+# disables chat. Leaving the chat in the frontend also closes the Telegram topic.
+
+# --- lib/chat/registry.ts (NEW, FULL SOURCE) --------------------------------
+# intent: transport-agnostic round-robin registry. Redis hash `chat:groups`
+# (field=chatId, value=JSON) is the store; `chat:groups:cursor` is the INCR
+# round-robin counter; `chat:groups:initialized` flips the source of truth from
+# the env fallback to the registry. In-memory Map/counter fallback (like pubsub).
+
+import { ensureRedis } from "@/lib/redis";
+import { createTracer } from "@/lib/trace";
+
+const trace = createTracer("chat-registry");
+
+const GROUPS_KEY = "chat:groups";
+const CURSOR_KEY = "chat:groups:cursor";
+const INITIALIZED_KEY = "chat:groups:initialized";
+
+export interface ChatGroup {
+  chatId: string;
+  title?: string;
+  paused: boolean;
+  registeredAt: number;
+}
+
+export interface DispatchTarget {
+  chatId: string | null;
+  disabled: boolean;
+  reason?: string;
+}
+
+const memGroups = new Map<string, ChatGroup>();
+let memCursor = 0;
+let memInitialized = false;
+
+function serialize(group: ChatGroup): string {
+  return JSON.stringify({ title: group.title, paused: group.paused, registeredAt: group.registeredAt });
+}
+
+function deserialize(chatId: string, raw: string): ChatGroup {
+  try {
+    const parsed = JSON.parse(raw) as Partial<ChatGroup>;
+    return { chatId, title: parsed.title, paused: Boolean(parsed.paused), registeredAt: parsed.registeredAt ?? 0 };
+  } catch {
+    return { chatId, paused: false, registeredAt: 0 };
+  }
+}
+
+function stableSort(groups: ChatGroup[]): ChatGroup[] {
+  return [...groups].sort((a, b) => a.registeredAt - b.registeredAt || a.chatId.localeCompare(b.chatId));
+}
+
+export async function registerGroup(chatId: string, title?: string): Promise<ChatGroup> {
+  const existing = await getGroup(chatId);
+  const group: ChatGroup = {
+    chatId,
+    title: title ?? existing?.title,
+    paused: false,
+    registeredAt: existing?.registeredAt ?? Date.now(),
+  };
+  const redis = await ensureRedis();
+  if (redis) {
+    await redis.hset(GROUPS_KEY, chatId, serialize(group));
+    await redis.set(INITIALIZED_KEY, "1");
+  } else {
+    memGroups.set(chatId, group);
+    memInitialized = true;
+  }
+  trace.info("registered chat group", { chatId, title, reRegistered: Boolean(existing) });
+  return group;
+}
+
+export async function pauseGroup(chatId: string): Promise<ChatGroup | null> {
+  const existing = await getGroup(chatId);
+  if (!existing) return null;
+  const updated: ChatGroup = { ...existing, paused: true };
+  const redis = await ensureRedis();
+  if (redis) await redis.hset(GROUPS_KEY, chatId, serialize(updated));
+  else memGroups.set(chatId, updated);
+  return updated;
+}
+
+export async function removeGroup(chatId: string): Promise<boolean> {
+  const redis = await ensureRedis();
+  if (redis) return (await redis.hdel(GROUPS_KEY, chatId)) > 0;
+  return memGroups.delete(chatId);
+}
+
+export async function getGroup(chatId: string): Promise<ChatGroup | null> {
+  const redis = await ensureRedis();
+  if (redis) {
+    const raw = await redis.hget(GROUPS_KEY, chatId);
+    return raw ? deserialize(chatId, raw) : null;
+  }
+  return memGroups.get(chatId) ?? null;
+}
+
+export async function listGroups(): Promise<ChatGroup[]> {
+  const redis = await ensureRedis();
+  if (redis) {
+    const all = await redis.hgetall(GROUPS_KEY);
+    return Object.entries(all).map(([id, raw]) => deserialize(id, raw));
+  }
+  return Array.from(memGroups.values());
+}
+
+async function isInitialized(): Promise<boolean> {
+  const redis = await ensureRedis();
+  if (redis) return (await redis.get(INITIALIZED_KEY)) === "1";
+  return memInitialized;
+}
+
+async function nextCursor(): Promise<number> {
+  const redis = await ensureRedis();
+  if (redis) return await redis.incr(CURSOR_KEY);
+  memCursor += 1;
+  return memCursor;
+}
+
+/** PEEK: can a new chat be dispatched now? (widget config gate; no cursor use) */
+export async function canDispatch(): Promise<boolean> {
+  const groups = await listGroups();
+  if (groups.some((g) => !g.paused)) return true;
+  if (!(await isInitialized())) return Boolean(process.env.TELEGRAM_SUPPORT_CHAT_ID);
+  return false;
+}
+
+/** CONSUME: pick the next target chat id in round-robin. */
+export async function selectDispatchChatId(): Promise<DispatchTarget> {
+  const groups = await listGroups();
+  const active = stableSort(groups.filter((g) => !g.paused));
+  if (active.length > 0) {
+    const cursor = await nextCursor();
+    const chosen = active[(cursor - 1) % active.length];
+    return { chatId: chosen.chatId, disabled: false };
+  }
+  if (!(await isInitialized())) {
+    const envId = process.env.TELEGRAM_SUPPORT_CHAT_ID;
+    if (envId) return { chatId: envId, disabled: false };
+  }
+  return { chatId: null, disabled: true, reason: "no_active_groups" };
+}
+
+/** Test-only: clear in-memory fallback state for cross-file suite isolation. */
+export function resetRegistryForTests(): void {
+  memGroups.clear();
+  memCursor = 0;
+  memInitialized = false;
+}
+
+# --- lib/chat/telegram.ts (CHANGED, RELEVANT SOURCE) ------------------------
+# intent: all send helpers accept an OPTIONAL targetChatId (defaults to the env
+# getSupportChatId()) so existing callers/tests are unchanged; new helpers back
+# the commands + topic close.
+
+export async function createForumTopic(name: string, targetChatId?: string): Promise<TelegramForumTopic> {
+  const chatId = targetChatId ?? getSupportChatId();
+  return telegramFetch<TelegramForumTopic>("createForumTopic", {
+    chat_id: chatId, name: name.slice(0, 128), icon_color: 7322096,
+  });
+}
+
+export async function sendMessageToTopic(
+  text: string, threadId: number, targetChatId?: string, options?: { disableNotification?: boolean },
+): Promise<TelegramMessage> {
+  const chatId = targetChatId ?? getSupportChatId();
+  return telegramFetch<TelegramMessage>("sendMessage", {
+    chat_id: chatId, message_thread_id: threadId, text: text.slice(0, 4096),
+    parse_mode: "HTML", disable_notification: options?.disableNotification ?? false,
+  });
+}
+
+// sendMediaToTopic(threadId, media, targetChatId?) — same optional-chatId pattern.
+
+/** Plain (optionally threaded) message — used for /start /pause /end replies. */
+export async function sendPlainMessage(chatId: string, text: string, threadId?: number): Promise<TelegramMessage> {
+  const body: Record<string, unknown> = { chat_id: chatId, text: text.slice(0, 4096), parse_mode: "HTML" };
+  if (threadId) body.message_thread_id = threadId;
+  return telegramFetch<TelegramMessage>("sendMessage", body);
+}
+
+/** Close a forum topic (read-only). Called on frontend leave, /close, /end. */
+export async function closeForumTopic(chatId: string, threadId: number): Promise<boolean> {
+  return telegramFetch<boolean>("closeForumTopic", { chat_id: chatId, message_thread_id: threadId });
+}
+
+export type GroupCommand = "start" | "pause" | "end";
+
+/** Parse /start /pause /end (strips @mention, case-insensitive, trims). */
+export function parseGroupCommand(text?: string): GroupCommand | null {
+  if (!text) return null;
+  const command = (text.trim().split(/\s+/)[0]?.toLowerCase() ?? "").split("@")[0];
+  if (command === "/start") return "start";
+  if (command === "/pause") return "pause";
+  if (command === "/end") return "end";
+  return null;
+}
+
+# NOTE: lib/chat/types.ts — TelegramMessage.chat is now
+#   `chat: { id: number; type: string; title?: string }`.
+
+# --- app/api/chat/telegram/route.ts (CHANGED, RELEVANT SOURCE) --------------
+# intent: group commands are intercepted BEFORE session resolution; /close now
+# also closes the topic on Telegram (unless forum_topic_closed already did).
+
+// ...after the isBotMessage guard, before extractThreadId:
+const groupCommand = parseGroupCommand(text);
+if (groupCommand) {
+  return await handleGroupCommand(groupCommand, message);
+}
+
+async function handleGroupCommand(command: GroupCommand, message: TelegramMessage): Promise<Response> {
+  const chatId = String(message.chat.id);
+  const title = message.chat.title;
+  const threadId = message.message_thread_id;
+  try {
+    if (command === "start") {
+      await registerGroup(chatId, title);
+      const active = (await listGroups()).filter((g) => !g.paused).length;
+      await sendPlainMessage(chatId, `✅ This group is now receiving live chats (round-robin across <b>${active}</b> active group${active === 1 ? "" : "s"}).`, threadId);
+      return Response.json({ ok: true });
+    }
+    if (command === "pause") {
+      const paused = await pauseGroup(chatId);
+      await sendPlainMessage(chatId, paused
+        ? "⏸️ Paused. Existing chats continue, but no new chats will be routed here until you send /start."
+        : "This group is not registered. Send /start to begin receiving chats.", threadId);
+      return Response.json({ ok: true });
+    }
+    // end
+    const sessions = await listOpenChatSessionsByChatId(chatId);
+    for (const s of sessions) {
+      await closeChatSession(s.id);
+      await deleteSessionFiles(s.id);
+      if (s.telegramChatId && s.telegramThreadId) await closeForumTopic(s.telegramChatId, s.telegramThreadId).catch(() => {});
+      await publishChatEvent(s.id, { type: "status", sessionId: s.id, status: "closed" });
+    }
+    await removeGroup(chatId);
+    const remaining = (await listGroups()).filter((g) => !g.paused).length;
+    await sendPlainMessage(chatId, `🛑 Ended <b>${sessions.length}</b> chat${sessions.length === 1 ? "" : "s"} and unregistered this group.` + (remaining === 0 ? " Live chat is now disabled (no active groups)." : ""), threadId);
+    return Response.json({ ok: true });
+  } catch (err) {
+    trace.error("telegram group command failed", { command, chatId, error: String(err) });
+    await sendPlainMessage(chatId, "⚠️ Command failed. Please try again.", threadId).catch(() => {});
+    return Response.json({ ok: true });
+  }
+}
+
+// ...within the per-session /close handler, before broadcasting closed:
+if (!message.forum_topic_closed && session.telegramChatId && session.telegramThreadId) {
+  await closeForumTopic(session.telegramChatId, session.telegramThreadId).catch(() => {});
+}
+
+# --- app/api/chat/send/route.ts (CHANGED, RELEVANT SOURCE) ------------------
+async function ensureTopic(session: ChatSession): Promise<ChatSession> {
+  if (session.telegramThreadId) return session;
+  const target = await selectDispatchChatId();
+  if (target.disabled || !target.chatId) {
+    throw new ChatTelegramError("Live chat is currently unavailable.", "CHAT_DISABLED");
+  }
+  const topic = await createForumTopic(`Chat: ${session.name ?? session.visitorId.slice(0, 8)}`, target.chatId);
+  return updateChatSessionThread(session.id, target.chatId, topic.message_thread_id);
+}
+
+// In handleText AND handleUpload, after findOrCreateSession + closed check:
+if (!session.telegramThreadId && !(await canDispatch())) {
+  return apiError({ code: ErrorCode.FORBIDDEN, message: "Live chat is currently unavailable." });
+}
+// Outbound sends now pass the session's group:
+//   sendMessageToTopic(telegramText, session.telegramThreadId!, session.telegramChatId ?? undefined)
+//   sendMediaToTopic(session.telegramThreadId!, {...}, session.telegramChatId ?? undefined)
+
+# --- app/api/chat/close/route.ts (CHANGED, RELEVANT SOURCE) -----------------
+// After deleteSessionFiles(updated.id), before publishing status:closed:
+if (updated.telegramChatId && updated.telegramThreadId) {
+  await closeForumTopic(updated.telegramChatId, updated.telegramThreadId).catch((err) => {
+    trace.warn("failed to close telegram topic on visitor close", { sessionId: updated.id, error: String(err) });
+  });
+}
+
+# --- app/api/chat/config/route.ts (NEW, FULL SOURCE) ------------------------
+import { NextRequest } from "next/server";
+import { createTracer } from "@/lib/trace";
+import { applyRouteLimit } from "@/lib/rate-limit";
+import { canDispatch } from "@/lib/chat/registry";
+
+const trace = createTracer("chat-config");
+export const dynamic = "force-dynamic";
+
+export async function GET(req: NextRequest) {
+  const blocked = await applyRouteLimit(req, "chat.config");
+  if (blocked) return blocked;
+  const envEnabled = process.env.NEXT_PUBLIC_LIVE_CHAT_ENABLED !== "false";
+  let enabled = envEnabled;
+  try {
+    enabled = envEnabled && (await canDispatch());
+  } catch (err) {
+    trace.error("chat config canDispatch failed", { error: String(err) });
+  }
+  return Response.json({ enabled });
+}
+
+# --- components/LiveChat.tsx (CHANGED, RELEVANT SOURCE) ---------------------
+const [serverEnabled, setServerEnabled] = useState(true);
+
+useEffect(() => {
+  if (!enabled) return;
+  let cancelled = false;
+  fetch("/api/chat/config", { signal: AbortSignal.timeout(8000) })
+    .then((res) => (res.ok ? res.json() : null))
+    .then((data) => {
+      if (!cancelled && data && typeof data.enabled === "boolean") setServerEnabled(data.enabled);
+    })
+    .catch(() => {});
+  return () => { cancelled = true; };
+}, [enabled]);
+
+// Render guard:
+if (!enabled) return null;
+if (!serverEnabled && !session) return null;
+
+# --- lib/chat/db.ts (CHANGED, FULL SOURCE OF ADDITION) ----------------------
+export async function listOpenChatSessionsByChatId(telegramChatId: string): Promise<ChatSession[]> {
+  try {
+    return await prisma.chatSession.findMany({ where: { telegramChatId, status: "open" } });
+  } catch (err) {
+    trace.error("listOpenChatSessionsByChatId failed", { telegramChatId, error: String(err) });
+    throw err;
+  }
+}
+
+# --- lib/rate-limit.ts (CHANGED) -------------------------------------------
+#   "chat.config": parseInt(process.env.RL_CHAT_CONFIG ?? "60", 10),
+
+# --- CLUSTERING VALIDATION + FIX (app/api/chat/stream/route.ts CHANGED) -----
+# intent: the in-memory pub/sub bus is PROCESS-LOCAL and cannot cross PM2 cluster
+# workers. The webhook publishes on whichever worker Telegram hits; the visitor's
+# SSE stream may live on a different worker. Redis pub/sub is the only real-time
+# cross-worker transport; when it is unavailable, DB polling is the durable
+# fallback (messages AND session status are persisted). The prior code only
+# polled `if (!unsubscribe)`, but subscribeChatEvents returns a TRUTHY in-memory
+# unsubscribe when Redis is down, so polling never started -> cross-worker replies
+# were silently dropped. FIX below.
+#
+# imports add: findChatSessionById (db), isRedisReady (redis).
+#
+# // closed-status flag + cross-worker close detection:
+# let closedStatusSent = false;
+# const sendStatus = (status) => {
+#   if (status.status === "closed") closedStatusSent = true;
+#   enqueue(`event: status\ndata: ${JSON.stringify(status)}\n\n`);
+# };
+# const checkSessionStatus = async () => {
+#   if (closedStatusSent) return;
+#   const fresh = await findChatSessionById(session.id);
+#   if (fresh?.status === "closed") sendStatus({ sessionId: session.id, status: "closed" });
+# };
+#
+# // poll runs BOTH history + status so a cross-worker close propagates:
+# pollInterval = setInterval(() => {
+#   Promise.all([sendHistory(), checkSessionStatus()]).catch(...);
+# }, POLL_INTERVAL_MS);
+#
+# // start polling whenever the transport is not durable (cross-worker capable):
+# const durableTransport = Boolean(unsubscribe) && isRedisReady();
+# if (!durableTransport) startPolling();
+#
+# WHY dedup still holds: sendMessage increments lastMessageCount + records the id,
+# so a subsequent poll won't re-emit; and if the poll wins first, the in-memory
+# handler drops the id via historyMessageIds. When Redis is up, durableTransport
+# is true (no polling) and onDisconnect/onReconnect toggle polling on a blip.
+#
+# REGISTRY caveat (documented, not code-fixed): lib/chat/registry.ts's in-memory
+# fallback is also process-local and has NO DB persistence, so multi-worker
+# `/start` sharing REQUIRES Redis. Without it, canDispatch() still returns true
+# via the TELEGRAM_SUPPORT_CHAT_ID env fallback on unaware workers, so chat
+# continues (routing is just not globally round-robin) — graceful, not an outage.
+
+# --- tests (bun:test) -------------------------------------------------------
+# tests/chat-registry.test.ts (NEW): mocks redis off; parseGroupCommand table +
+#   round-robin lifecycle (env fallback pre-init -> A,B,A,B -> pause A -> B only,
+#   still listed -> re-register unpauses -> remove all -> disabled even with env
+#   set). resetRegistryForTests() at top + afterAll for cross-file isolation.
+# tests/chat.test.ts (CHANGED): the "@/lib/chat/db" mock gains
+#   listOpenChatSessionsByChatId (webhook imports it at module load).
+# VERIFY: bun test tests/chat-registry.test.ts && bun test tests/chat.test.ts
+#         && bun test tests/chat-attachments.test.ts   (run separately)
+
+# =============================================================================
 # END OF VERBOSE DDIFF
 # =============================================================================
 # See live-chat.ddiff for the condensed reference, the styling class-by-element

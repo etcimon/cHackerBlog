@@ -128,6 +128,9 @@ export default function LiveChat() {
   const [unread, setUnread] = useState(0);
   const [attachment, setAttachment] = useState<File | null>(null);
   const [showCloseModal, setShowCloseModal] = useState(false);
+  // Server-side availability (round-robin registry). Starts true so the bubble
+  // shows immediately; the config probe hides it only when no group can receive.
+  const [serverEnabled, setServerEnabled] = useState(true);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -147,6 +150,22 @@ export default function LiveChat() {
   const enabled = process.env.NEXT_PUBLIC_LIVE_CHAT_ENABLED !== "false";
   const attachmentsEnabled = process.env.NEXT_PUBLIC_LIVE_CHAT_ATTACHMENTS_ENABLED !== "false";
   const greeting = process.env.NEXT_PUBLIC_LIVE_CHAT_GREETING || t("chat.greeting");
+
+  // Probe live availability once (registry may report chat disabled when no
+  // support group is active). Best-effort: a failed probe leaves the bubble on.
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    fetch("/api/chat/config", { signal: AbortSignal.timeout(8000) })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data && typeof data.enabled === "boolean") setServerEnabled(data.enabled);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled]);
 
   function ensureVisitorId(): string {
     if (!visitorIdRef.current) visitorIdRef.current = crypto.randomUUID();
@@ -367,6 +386,9 @@ export default function LiveChat() {
   }
 
   if (!enabled) return null;
+  // Hide entirely when the server reports chat unavailable AND there is no live
+  // session to preserve (an in-flight conversation is never yanked away).
+  if (!serverEnabled && !session) return null;
 
   const isClosed = session?.status === "closed";
   const sendDisabled = isClosed || status === "sending" || (!input.trim() && !attachment);

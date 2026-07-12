@@ -44,6 +44,18 @@ Bottom-up layering: each layer depends only on those below it.
 - `src/lib/social/linkedin.ts` - LinkedIn API integration
 - `src/lib/sharing/` - Share intent-link builders (URL-based, credential-free)
 
+### Layer 3.5: Live Chat subsystem (`src/lib/chat/`)
+Optional Telegram-relayed support chat. Each conversation maps to one Telegram
+forum topic; agent replies stream to the browser via SSE. Degrades to an
+in-memory bus + DB polling when Redis is off.
+- `src/lib/chat/types.ts` - Shared DTO / Telegram / event types (incl. attachment shapes)
+- `src/lib/chat/redis-lazy.ts` - Lazy `getReadyRedis`/`isRedisReady` (no eager connection at import)
+- `src/lib/chat/db.ts` - Prisma helpers + DTO mappers (attachment metadata only on the wire)
+- `src/lib/chat/storage.ts` - Per-session on-disk attachment store (save/read/delete + traversal guard)
+- `src/lib/chat/telegram.ts` - Bot API wrappers (send/media/getFile/download), command parsing, webhook registration
+- `src/lib/chat/pubsub.ts` - Redis pub/sub with in-memory fallback (cross-worker fanout)
+- `src/lib/chat/registry.ts` - Multi-group round-robin registry (`/start` `/pause` `/end`); env chat id is the fallback
+
 ### Layer 4: API Routes
 - `src/app/api/auth/` - Admin authentication
 - `src/app/api/feed/` - Cursor-paginated feed with tag/locale filtering
@@ -57,6 +69,12 @@ Bottom-up layering: each layer depends only on those below it.
 - `src/app/api/tags/` - Tag listing
 - `src/app/api/link-preview/` - Server-side link metadata fetch for embeds
 - `src/app/api/highlightjs/` - Serves the resolved highlight.js stylesheet
+- `src/app/api/chat/config/` - Live-chat availability probe (`{ enabled }`)
+- `src/app/api/chat/send/` - Visitor->Telegram relay (JSON text or multipart attachment)
+- `src/app/api/chat/stream/` - SSE history + live message/status events
+- `src/app/api/chat/close/` - Visitor-initiated session close
+- `src/app/api/chat/attachments/[id]/` - Authenticated attachment byte serving
+- `src/app/api/chat/telegram/` - Telegram webhook (agent replies / media / `/start` `/pause` `/end` `/close`)
 
 ### Layer 5: Client Components
 - `src/components/providers.tsx` - Theme and context providers
@@ -75,6 +93,7 @@ Bottom-up layering: each layer depends only on those below it.
 - `src/components/footer.tsx` - Footer + top-right controls, legal link modals
 - `src/components/language-switcher.tsx` - Language dropdown for locale selection
 - `src/components/terminal-caret.tsx` - Animated terminal caret masthead effect
+- `src/components/live-chat.tsx` - Floating live-chat widget (SSE stream, attachments, availability gate)
 - `src/lib/api-client.ts` - API client with error handling (`ApiClientError`)
 - `src/lib/use-i18n.ts` - Client i18n hook for locale resolution and translations
 - `src/lib/use-site-config.ts` - Client config hook for site settings
@@ -159,9 +178,19 @@ Optional variables include:
 - `GROK_BASE_URL` - x.ai API endpoint (default: `https://api.x.ai/v1`)
 - `GROK_MODEL` - Model name (default: `grok-4.3`)
 - `GROK_TEMPERATURE` - Sampling temperature (default: `0.2`)
+- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_SUPPORT_CHAT_ID` - Live chat: bot token + fallback support supergroup (topics enabled)
+- `TELEGRAM_WEBHOOK_URL` / `TELEGRAM_WEBHOOK_SECRET` - Public webhook URL + shared secret (auto-registered on startup via `src/instrumentation.ts`)
+- `CHAT_UPLOAD_DIR` / `CHAT_MAX_UPLOAD_MB` - Attachment store folder + max single-upload size
+- `NEXT_PUBLIC_LIVE_CHAT_ENABLED` / `NEXT_PUBLIC_LIVE_CHAT_ATTACHMENTS_ENABLED` / `NEXT_PUBLIC_LIVE_CHAT_GREETING` - Client widget toggles + greeting
 
 Note: theme colors and fonts are defined in `src/styles/themes/*` (SCSS), not via
 env vars. Only `THEME` (preset selection) and `CODE_THEME` affect styling from env.
 
+Live chat is optional: with no `TELEGRAM_*` set the relay no-ops (messages
+persist with a delivery-error badge). Support groups self-register via `/start`
+`/pause` `/end` and new chats are distributed round-robin (requires Redis for the
+shared registry across workers). Chat data lives in the `ChatSession` /
+`ChatMessage` Prisma models; attachment bytes live on disk under `CHAT_UPLOAD_DIR`.
+
 See `.env.example` for full configuration options including feed tuning, rate
-limiting, uploads, mailer, and social integrations.
+limiting, uploads, mailer, social integrations, and live chat.

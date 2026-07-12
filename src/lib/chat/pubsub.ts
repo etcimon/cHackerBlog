@@ -14,6 +14,7 @@
 import Redis from "ioredis";
 import { env } from "@/lib/env";
 import { createLogger } from "@/lib/logger";
+import { getReadyRedis } from "@/lib/chat/redis-lazy";
 import type { ChatEvent } from "@/lib/chat/types";
 
 const log = createLogger("chat:pubsub");
@@ -28,21 +29,6 @@ export type ChatEventHandler = (event: ChatEvent) => void;
 export interface SubscribeOptions {
   onDisconnect?: () => void;
   onReconnect?: () => void;
-}
-
-/**
- * Lazily import the shared Redis singleton and return it only when it is ready.
- * Lazy so that importing this module (e.g. for the pure in-memory bus in tests)
- * never opens a Redis connection.
- */
-async function getReadyRedis(): Promise<import("ioredis").default | null> {
-  if (env.CACHE_DRIVER === "memory") return null;
-  try {
-    const { redis } = await import("@/lib/redis");
-    return redis.status === "ready" ? redis : null;
-  } catch {
-    return null;
-  }
 }
 
 // --- in-memory bus ----------------------------------------------------------

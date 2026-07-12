@@ -7,10 +7,26 @@
  * The `no-transform` + `X-Accel-Buffering: no` headers are required so proxies
  * (and Next itself) never buffer/compress the stream — otherwise live frames are
  * held until the stream ends and the browser never sees real-time replies.
+ *
+ * CLUSTERING: the in-memory pub/sub bus is PROCESS-LOCAL and cannot cross PM2
+ * workers. The webhook publishes on whichever worker Telegram hits; this SSE
+ * stream may live on a different worker. Redis pub/sub is the only real-time
+ * cross-worker transport; when it is unavailable, DB polling is the durable
+ * fallback (messages AND session status are persisted). subscribeChatEvents
+ * returns a TRUTHY unsubscribe even for the in-memory bus, so we must key polling
+ * on whether the transport is actually cross-worker-capable (Redis ready), NOT
+ * merely on whether an unsubscribe exists — otherwise cross-worker replies are
+ * silently dropped.
  */
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
-import { findChatSessionByVisitorId, listChatMessages, toMessageDto } from "@/lib/chat/db";
+import {
+  findChatSessionByVisitorId,
+  findChatSessionById,
+  listChatMessages,
+  toMessageDto,
+} from "@/lib/chat/db";
 import { subscribeChatEvents } from "@/lib/chat/pubsub";
+import { isRedisReady } from "@/lib/chat/redis-lazy";
 import type { ChatEvent } from "@/lib/chat/types";
 import { createLogger } from "@/lib/logger";
 
@@ -92,8 +108,11 @@ export async function GET(req: Request) {
         lastMessageCount++;
         enqueue(`event: message\ndata: ${JSON.stringify(m)}\n\n`);
       };
-      const sendStatus = (s: { sessionId: string; status: string }) =>
+      let closedStatusSent = false;
+      const sendStatus = (s: { sessionId: string; status: string }) => {
+        if (s.status === "closed") closedStatusSent = true;
         enqueue(`event: status\ndata: ${JSON.stringify(s)}\n\n`);
+      };
 
       const sendHistory = async () => {
         const msgs = (await listChatMessages(session.id)).map(toMessageDto);
@@ -103,6 +122,15 @@ export async function GET(req: Request) {
           lastMessageCount = msgs.length;
           enqueue(`event: history\ndata: ${JSON.stringify({ session: { id: session.id, visitorId, status: session.status }, messages: msgs })}\n\n`);
         }
+      };
+
+      // Cross-worker close detection for the polling path: a /close or /end on
+      // another worker only persists status + publishes on the Redis bus, so when
+      // we are polling (no durable bus) we must poll the row status too.
+      const checkSessionStatus = async () => {
+        if (closedStatusSent) return;
+        const fresh = await findChatSessionById(session.id);
+        if (fresh?.status === "closed") sendStatus({ sessionId: session.id, status: "closed" });
       };
 
       const handleEvent = (e: ChatEvent) => {
@@ -122,7 +150,11 @@ export async function GET(req: Request) {
       };
 
       const startPolling = () => {
-        if (!pollInterval) pollInterval = setInterval(() => void sendHistory().catch(() => {}), POLL_INTERVAL_MS);
+        if (!pollInterval) {
+          pollInterval = setInterval(() => {
+            void Promise.all([sendHistory(), checkSessionStatus()]).catch(() => {});
+          }, POLL_INTERVAL_MS);
+        }
       };
       const stopPolling = () => {
         if (pollInterval) {
@@ -137,7 +169,11 @@ export async function GET(req: Request) {
         onDisconnect: startPolling,
         onReconnect: stopPolling,
       });
-      if (!unsubscribe) startPolling();
+      // Poll unless the transport is durably cross-worker (a real, ready Redis
+      // subscription). The in-memory bus returns a truthy unsubscribe but cannot
+      // see events published on another worker, so it MUST keep polling.
+      const durableTransport = Boolean(unsubscribe) && (await isRedisReady());
+      if (!durableTransport) startPolling();
 
       await sendHistory();
       historyLoaded = true;

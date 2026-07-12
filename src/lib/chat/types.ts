@@ -110,9 +110,16 @@ export interface TelegramUser {
   username?: string;
 }
 
+export interface TelegramChat {
+  id: number;
+  type: string;
+  title?: string;
+}
+
 export interface TelegramMessage {
   message_id: number;
   message_thread_id?: number;
+  chat?: TelegramChat;
   from?: TelegramUser;
   text?: string;
   caption?: string;

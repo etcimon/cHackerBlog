@@ -14,7 +14,7 @@
  * various Telegram media objects into a single TelegramMediaRef.
  */
 import { createLogger } from "@/lib/logger";
-import { env } from "@/lib/env";
+import { getReadyRedis } from "@/lib/chat/redis-lazy";
 import type {
   ChatAttachmentType,
   OutboundMedia,
@@ -34,7 +34,10 @@ const API_BASE = "https://api.telegram.org";
 export type ChatTelegramErrorCode =
   | "TELEGRAM_CONFIG_MISSING"
   | "TELEGRAM_API_ERROR"
-  | "TELEGRAM_NETWORK_ERROR";
+  | "TELEGRAM_NETWORK_ERROR"
+  // No group is available to receive a new chat (registry empty after init and
+  // no env fallback). Surfaced to the send route so it can 403 the visitor.
+  | "CHAT_DISABLED";
 
 export class ChatTelegramError extends Error {
   code: ChatTelegramErrorCode;
@@ -55,6 +58,15 @@ function requireEnv(name: string): string {
     throw new ChatTelegramError(`Missing ${name}`, "TELEGRAM_CONFIG_MISSING");
   }
   return value;
+}
+
+/**
+ * The env fallback support group id. Used as the DEFAULT `targetChatId` for the
+ * send helpers so pre-multi-group callers/tests are unchanged; the round-robin
+ * registry overrides it by passing an explicit group id (see lib/chat/registry).
+ */
+export function getSupportChatId(): string {
+  return requireEnv("TELEGRAM_SUPPORT_CHAT_ID");
 }
 
 /** Escape &<>" for parse_mode:"HTML". */
@@ -93,9 +105,12 @@ async function telegramFetch<T>(method: string, body: unknown): Promise<T> {
   return json.result as T;
 }
 
-/** Create ONE forum topic in the support supergroup (name sliced to 128). */
-export async function createForumTopic(name: string): Promise<TelegramForumTopic> {
-  const chatId = requireEnv("TELEGRAM_SUPPORT_CHAT_ID");
+/**
+ * Create ONE forum topic (name sliced to 128) in `targetChatId`, defaulting to
+ * the env support group. The round-robin dispatcher passes the chosen group id.
+ */
+export async function createForumTopic(name: string, targetChatId?: string): Promise<TelegramForumTopic> {
+  const chatId = targetChatId ?? getSupportChatId();
   return telegramFetch<TelegramForumTopic>("createForumTopic", {
     chat_id: chatId,
     name: name.slice(0, 128),
@@ -106,14 +121,54 @@ export async function createForumTopic(name: string): Promise<TelegramForumTopic
 export async function sendMessageToTopic(
   text: string,
   threadId: number,
+  targetChatId?: string,
 ): Promise<TelegramMessage> {
-  const chatId = requireEnv("TELEGRAM_SUPPORT_CHAT_ID");
+  const chatId = targetChatId ?? getSupportChatId();
   return telegramFetch<TelegramMessage>("sendMessage", {
     chat_id: chatId,
     message_thread_id: threadId,
     text: text.slice(0, 4096),
     parse_mode: "HTML",
   });
+}
+
+/** Plain (optionally threaded) HTML message — used for /start /pause /end replies. */
+export async function sendPlainMessage(
+  chatId: string,
+  text: string,
+  threadId?: number,
+): Promise<TelegramMessage> {
+  const body: Record<string, unknown> = {
+    chat_id: chatId,
+    text: text.slice(0, 4096),
+    parse_mode: "HTML",
+  };
+  if (threadId) body.message_thread_id = threadId;
+  return telegramFetch<TelegramMessage>("sendMessage", body);
+}
+
+/**
+ * Close a forum topic. Called when a visitor leaves (close route), on /close,
+ * and on /end. Best-effort at the call sites (wrapped in .catch()).
+ */
+export async function closeForumTopic(chatId: string, threadId: number): Promise<boolean> {
+  return telegramFetch<boolean>("closeForumTopic", {
+    chat_id: chatId,
+    message_thread_id: threadId,
+  });
+}
+
+/** Group-level admin commands parsed from a message before session resolution. */
+export type GroupCommand = "start" | "pause" | "end";
+
+/** Parse /start /pause /end (strips a trailing @botname, case-insensitive). */
+export function parseGroupCommand(text?: string): GroupCommand | null {
+  if (!text) return null;
+  const command = (text.trim().split(/\s+/)[0]?.toLowerCase() ?? "").split("@")[0];
+  if (command === "/start") return "start";
+  if (command === "/pause") return "pause";
+  if (command === "/end") return "end";
+  return null;
 }
 
 export async function setTelegramWebhook(
@@ -219,9 +274,10 @@ function mediaMethodFor(type: ChatAttachmentType): { method: string; field: stri
 export async function sendMediaToTopic(
   threadId: number,
   { type, data, fileName, mime, caption }: OutboundMedia,
+  targetChatId?: string,
 ): Promise<TelegramMessage> {
   const token = requireEnv("TELEGRAM_BOT_TOKEN");
-  const chatId = requireEnv("TELEGRAM_SUPPORT_CHAT_ID");
+  const chatId = targetChatId ?? getSupportChatId();
   const { method, field } = mediaMethodFor(type);
 
   const form = new FormData();
@@ -354,20 +410,6 @@ export function extractMedia(message: TelegramMessage): TelegramMediaRef | null 
 const WEBHOOK_LOCK_KEY = "chat:webhook:lock";
 const WEBHOOK_STATE_KEY = "chat:webhook:state";
 const WEBHOOK_REREGISTER_INTERVAL_MS = 30_000;
-
-/**
- * Lazily fetch the shared Redis singleton only when ready (never opens a
- * connection at import time — keeps the pure helpers importable in tests).
- */
-async function getReadyRedis(): Promise<import("ioredis").default | null> {
-  if (env.CACHE_DRIVER === "memory") return null;
-  try {
-    const { redis } = await import("@/lib/redis");
-    return redis.status === "ready" ? redis : null;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Register the Telegram webhook on server startup. Uses Redis keys to store a
