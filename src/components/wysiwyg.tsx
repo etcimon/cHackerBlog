@@ -24,6 +24,7 @@ import {
   Globe,
   ChevronLeft,
   ChevronRight,
+  Scaling,
 } from "lucide-react";
 import { api, ApiClientError } from "@/lib/api-client";
 import { useToast } from "@/components/toast";
@@ -48,6 +49,15 @@ import {
   escapeCode,
 } from "@/lib/code-block-render";
 import { hydrateLinkEmbeds } from "@/lib/link-embeds";
+import {
+  findSizableElement,
+  selectionNode,
+  readSizable,
+  renderSizable,
+  type SizableTarget,
+} from "@/lib/embed-sizing";
+import { collapseBase64, expandBase64 } from "@/lib/base64-placeholders";
+import { EmbedSizeDialog } from "@/components/embed-size-dialog";
 import {
   initHighlightJs,
   loadHighlightJsCss,
@@ -203,6 +213,13 @@ export function Wysiwyg({ value, onChange }: Props) {
   // `dangerouslySetInnerHTML` on every keystroke / highlight pass (otherwise an
   // expanded block would flicker back to collapsed as you type).
   const expandedBlocksRef = useRef<Set<number>>(new Set());
+  // Base64 data URLs are collapsed to "[base64 data]" placeholders in the
+  // markdown textarea; this store maps them back for rendering/saving.
+  const base64StoreRef = useRef<Map<string, string>>(new Map());
+  // Currently selected size-capable element in rich mode (never marked in the
+  // DOM — innerHTML is serialized on save) and its dialog snapshot.
+  const [sizeTarget, setSizeTarget] = useState<HTMLElement | null>(null);
+  const [sizeDialog, setSizeDialog] = useState<SizableTarget | null>(null);
 
   const codeToggleOptions = useMemo<CodeToggleOptions>(
     () => ({
@@ -215,15 +232,25 @@ export function Wysiwyg({ value, onChange }: Props) {
     [],
   );
 
+  // Markdown -> HTML with base64 placeholders expanded back to real data URLs.
+  const mdToHtml = useCallback(
+    (source: string) => marked(expandBase64(source, base64StoreRef.current)) as string,
+    [],
+  );
+
   // Preview HTML for markdown mode. Collapsed preview skips the marked() render
   // entirely so typing stays cheap when the pane is hidden. `hljsReady` re-runs
   // it once highlight.js loads. Note: this only feeds the *visible* preview; the
   // saved value is emitted independently by the onChange effect below, so
   // collapsing the preview never affects the data written on save.
   const previewHtml = useMemo(
-    () => (previewCollapsed ? "" : (marked(md) as string)),
-    [md, previewCollapsed, hljsReady],
+    () => (previewCollapsed ? "" : mdToHtml(md)),
+    [md, previewCollapsed, hljsReady, mdToHtml],
   );
+
+  // Same identity concern as the article body: a fresh { __html } object on
+  // every render makes React re-parse the preview and drop hydrated embeds.
+  const previewMarkup = useMemo(() => ({ __html: previewHtml }), [previewHtml]);
 
   // Initialize rich content and keep it in sync with value prop. Re-wire the
   // code block collapse toggles after every sync so they work in rich mode too
@@ -272,18 +299,18 @@ export function Wysiwyg({ value, onChange }: Props) {
           setHljsReady(true);
         });
       }
-      const html = marked(md) as string;
+      const html = mdToHtml(md);
       onChange(html);
     }
-  }, [md, mode, onChange, hljsInitialized]);
+  }, [md, mode, onChange, hljsInitialized, mdToHtml]);
 
   // Re-render markdown when hljs becomes ready
   useEffect(() => {
     if (hljsReady && mode === "md" && md) {
-      const html = marked(md) as string;
+      const html = mdToHtml(md);
       onChange(html);
     }
-  }, [hljsReady, mode, md, onChange]);
+  }, [hljsReady, mode, md, onChange, mdToHtml]);
 
   // Wire the code block collapse/expand toggle bars in the markdown preview.
   // Re-runs whenever the rendered markdown changes or hljs becomes ready. The
@@ -313,8 +340,13 @@ export function Wysiwyg({ value, onChange }: Props) {
     // Register the embed rule so embed HTML collapses back to @[name](url)
     addEmbedTurndownRule(turndownService);
     const markdown = turndownService.turndown(html);
+    // Show base64 image payloads as short placeholders in the textarea; the
+    // store lets mdToHtml expand them again for preview/save.
+    const { md: collapsed, store } = collapseBase64(markdown);
+    base64StoreRef.current = store;
     pendingCaretRef.current = caretIdx;
-    setMd(markdown);
+    setMd(collapsed);
+    setSizeTarget(null);
     setMode("md");
   }, [value]);
 
@@ -322,7 +354,7 @@ export function Wysiwyg({ value, onChange }: Props) {
   const toggleToRich = useCallback(() => {
     // Capture the caret's markdown block before conversion.
     const caretIdx = mdRef.current ? getMdCaretBlockIndex(mdRef.current) : 0;
-    const html = marked(md) as string;
+    const html = mdToHtml(md);
     onChange(html);
     setMd(""); // Clear markdown state when switching back to rich
     setMode("rich");
@@ -337,7 +369,7 @@ export function Wysiwyg({ value, onChange }: Props) {
         placeRichCaretAtBlock(ref.current, caretIdx);
       }
     });
-  }, [md, onChange, codeToggleOptions]);
+  }, [md, onChange, codeToggleOptions, mdToHtml]);
 
   // After switching to Markdown, restore the caret to the block mirroring the
   // rich-mode position and focus the textarea (seamless hand-off). Guarded by
@@ -459,19 +491,57 @@ export function Wysiwyg({ value, onChange }: Props) {
     onClick,
     title,
     children,
+    disabled,
+    testId,
   }: {
     onClick: () => void;
     title: string;
     children: React.ReactNode;
+    disabled?: boolean;
+    testId?: string;
   }) => (
     <button
       type="button"
       title={title}
+      data-testid={testId}
+      disabled={disabled}
       onClick={onClick}
-      className="rounded p-2 text-fg transition-colors hover:bg-border/40"
+      className="rounded p-2 text-fg transition-colors hover:bg-border/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
     >
       {children}
     </button>
+  );
+
+  // Size toolbar: open the dialog for the tracked element, or clear it when
+  // the element left the editor (e.g. after an undo).
+  const handleSizeClick = useCallback(() => {
+    if (!sizeTarget || !ref.current || !ref.current.contains(sizeTarget)) {
+      setSizeTarget(null);
+      return;
+    }
+    const t = readSizable(sizeTarget);
+    if (t) setSizeDialog(t);
+  }, [sizeTarget]);
+
+  // Apply dialog edits: swap the element for a freshly rendered one, then
+  // re-wire toggles/hydration and emit the updated HTML.
+  const handleSizeApply = useCallback(
+    (next: SizableTarget) => {
+      setSizeDialog(null);
+      const el = sizeTarget;
+      const root = ref.current;
+      if (!el || !root || !root.contains(el)) return;
+      const tpl = document.createElement("template");
+      tpl.innerHTML = renderSizable(next);
+      const fresh = tpl.content.firstElementChild as HTMLElement | null;
+      if (!fresh) return;
+      el.replaceWith(fresh);
+      setSizeTarget(fresh);
+      wireCodeBlockToggles(root, codeToggleOptions);
+      hydrateLinkEmbeds(root);
+      onChange(root.innerHTML);
+    },
+    [sizeTarget, codeToggleOptions, onChange],
   );
 
   return (
@@ -514,6 +584,14 @@ export function Wysiwyg({ value, onChange }: Props) {
                 }}
               >
                 <Link2 className="h-4 w-4" />
+              </Btn>
+              <Btn
+                title="Size & layout"
+                testId="size-button"
+                disabled={!sizeTarget}
+                onClick={handleSizeClick}
+              >
+                <Scaling className="h-4 w-4" />
               </Btn>
             </>
           )}
@@ -561,6 +639,18 @@ export function Wysiwyg({ value, onChange }: Props) {
           ref={ref}
           contentEditable
           onInput={handleInput}
+          onClick={(e) => {
+            if (ref.current) {
+              setSizeTarget(findSizableElement(e.target as Node, ref.current));
+            }
+          }}
+          onKeyUp={() => {
+            if (ref.current) {
+              setSizeTarget(
+                findSizableElement(selectionNode(window.getSelection()), ref.current),
+              );
+            }
+          }}
           className="article-body min-h-[260px] px-4 py-3 text-fg outline-none"
           suppressContentEditableWarning
         />
@@ -598,10 +688,18 @@ export function Wysiwyg({ value, onChange }: Props) {
               ref={previewRef}
               data-testid="md-preview"
               className="article-body min-h-[260px] w-1/2 overflow-auto px-4 py-3 text-fg"
-              dangerouslySetInnerHTML={{ __html: previewHtml }}
+              dangerouslySetInnerHTML={previewMarkup}
             />
           )}
         </div>
+      )}
+
+      {sizeDialog && (
+        <EmbedSizeDialog
+          target={sizeDialog}
+          onApply={handleSizeApply}
+          onClose={() => setSizeDialog(null)}
+        />
       )}
     </div>
   );

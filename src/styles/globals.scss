@@ -605,18 +605,24 @@ html {
     z-index: 50;
   }
 
-  // Blinking underscore caret (see components/terminal-caret.tsx). Positioned
-  // in page coordinates by the component; the glow + blink sell the terminal.
+  // Hacker caret keeps only its phosphor colour + glow; the structural
+  // position/blink is shared by every caret theme (see below).
   .terminal-caret {
-    position: absolute;
-    z-index: 45;
-    pointer-events: none;
     background: rgb(var(--cb-accent));
     box-shadow:
       0 0 6px rgb(var(--cb-accent) / 0.8),
       0 0 12px rgb(var(--cb-accent) / 0.5);
-    animation: terminal-caret-blink 1.05s steps(1) infinite;
   }
+}
+
+// Caret chrome shared by every caret theme (hacker underscore, medium CRT
+// block — see components/terminal-caret.tsx). z-index 30 slides it under the
+// sticky tag bar (z-40) when a title scrolls beneath it.
+.terminal-caret {
+  position: absolute;
+  z-index: 30;
+  pointer-events: none;
+  animation: terminal-caret-blink 1.05s steps(1) infinite;
 }
 
 @keyframes terminal-caret-blink {
@@ -627,6 +633,21 @@ html {
   50.01%,
   100% {
     opacity: 0;
+  }
+}
+
+@keyframes terminal-caret-flicker {
+  0% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.25);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme] .terminal-caret {
+    animation: none;
   }
 }
 

@@ -7,6 +7,14 @@ import { spawn, ChildProcess } from "child_process";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { existsSync, mkdirSync, writeFileSync, unlinkSync } from "fs";
+import { config } from "dotenv";
+
+// The developer's .env (auto-loaded by bun) must not leak into the test
+// server: layer .env.test under the explicit overrides in each spawned env.
+// Parsed into a scratch object — mutating process.env would clobber values
+// the test files read (e.g. .env.test's ADMIN_PASSWORD=changeme vs the
+// harness's test-password).
+const { parsed: envTest } = config({ path: ".env.test", processEnv: {} });
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -69,6 +77,7 @@ async function startTestServer(options: StartOptions = {}): Promise<string> {
     detached: process.platform !== "win32",
     env: {
       ...process.env,
+      ...envTest,
       NODE_ENV: mode === "prod" ? "production" : "test",
       PORT: SERVER_PORT.toString(),
       DATABASE_PROVIDER: "sqlite",

@@ -22,6 +22,36 @@ import type { LinkPreview } from "@/lib/link-preview";
 /** Scripts already injected (module-scoped so it survives re-renders). */
 const loadedScripts = new Set<string>();
 
+/**
+ * Cards already hydrated (or with a fetch in flight). Kept in memory rather
+ * than as a DOM attribute: the rich editor serializes innerHTML on save, so
+ * an attribute marker would be persisted into article HTML and block
+ * hydration on every later render.
+ */
+const hydratedCards = new WeakSet<HTMLElement>();
+
+/**
+ * One in-flight request per URL. The markdown preview re-injects its HTML on
+ * every keystroke and /api/link-preview is rate-limited, so repeat renders
+ * share the same promise. A failure stays cached for FAILURE_RETRY_MS (also
+ * deduping retries) before the URL may be fetched again.
+ */
+const previewCache = new Map<string, Promise<LinkPreview | null>>();
+const FAILURE_RETRY_MS = 30_000;
+
+function fetchPreview(url: string): Promise<LinkPreview | null> {
+  const cached = previewCache.get(url);
+  if (cached) return cached;
+  const pending = api
+    .get<LinkPreview>(`/api/link-preview?url=${encodeURIComponent(url)}`)
+    .catch(() => {
+      setTimeout(() => previewCache.delete(url), FAILURE_RETRY_MS);
+      return null;
+    });
+  previewCache.set(url, pending);
+  return pending;
+}
+
 interface TwitterWidgets {
   widgets?: { load?: (el?: HTMLElement) => void };
 }
@@ -47,16 +77,19 @@ function setText(root: ParentNode, selector: string, value: string): void {
 
 /** Enrich a single generic preview card in place. */
 async function hydrateCard(card: HTMLElement): Promise<void> {
-  if (card.getAttribute("data-link-hydrated") === "1") return;
+  // Strip any stale flag that leaked into stored HTML from older saves so it
+  // never confuses other logic or re-serializes.
+  card.removeAttribute("data-link-hydrated");
+  if (hydratedCards.has(card)) return;
   const url = card.getAttribute("data-src");
   if (!url) return;
   // Mark first to avoid duplicate in-flight requests across rapid re-renders.
-  card.setAttribute("data-link-hydrated", "1");
+  hydratedCards.add(card);
 
-  let meta: LinkPreview;
-  try {
-    meta = await api.get<LinkPreview>(`/api/link-preview?url=${encodeURIComponent(url)}`);
-  } catch {
+  const meta = await fetchPreview(url);
+  if (meta === null) {
+    // Let a later render retry once the failure leaves previewCache.
+    hydratedCards.delete(card);
     return; // Leave the base card (host + Visit site) untouched.
   }
 
@@ -87,6 +120,12 @@ async function hydrateCard(card: HTMLElement): Promise<void> {
   }
 }
 
+function scanCards(root: HTMLElement): void {
+  root
+    .querySelectorAll<HTMLElement>('[data-link-hydrate="1"]')
+    .forEach((card) => void hydrateCard(card));
+}
+
 /**
  * Hydrate every URL embed inside `root`. Enriches generic preview cards and
  * loads any provider scripts they declare. Idempotent.
@@ -95,9 +134,7 @@ export function hydrateLinkEmbeds(root: HTMLElement | null | undefined): void {
   if (!root || typeof window === "undefined") return;
 
   // 1. Generic preview cards.
-  root
-    .querySelectorAll<HTMLElement>('[data-link-hydrate="1"]:not([data-link-hydrated="1"])')
-    .forEach((card) => void hydrateCard(card));
+  scanCards(root);
 
   // 2. Script-driven providers (X / Twitter, etc.).
   const scripts = new Set<string>();

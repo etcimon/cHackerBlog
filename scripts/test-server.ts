@@ -8,6 +8,14 @@ import { spawn, ChildProcess } from "child_process";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { existsSync, mkdirSync, writeFileSync, unlinkSync } from "fs";
+import { config } from "dotenv";
+
+// The developer's .env (auto-loaded by bun) must not leak into the test
+// server: layer .env.test under the explicit overrides in the spawned env.
+// Parsed into a scratch object — mutating process.env would clobber values
+// the test files read (e.g. .env.test's ADMIN_PASSWORD=changeme vs the
+// harness's test-password).
+const { parsed: envTest } = config({ path: ".env.test", processEnv: {} });
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -15,6 +23,9 @@ const __dirname = dirname(__filename);
 let serverProcess: ChildProcess | null = null;
 export const SERVER_PORT = 3001;
 export const SERVER_URL = `http://localhost:${SERVER_PORT}`;
+// Password the spawned test server expects; e2e helpers import this so
+// single-file runs work without ADMIN_PASSWORD in the invoking environment.
+export const TEST_ADMIN_PASSWORD = "test-password";
 const LOCK_FILE = join(__dirname, "..", ".test-server.lock");
 
 interface StartOptions {
@@ -84,8 +95,12 @@ export async function startTestServer(options: StartOptions = {}): Promise<strin
   serverProcess = spawn("bun", args, {
     cwd: join(__dirname, ".."),
     stdio: "pipe",
+    // On POSIX, become a process-group leader so cleanup can kill the whole
+    // tree (bun wrapper + next-server child) via process.kill(-pid).
+    detached: process.platform !== "win32",
     env: {
       ...process.env,
+      ...envTest,
       NODE_ENV: mode === "prod" ? "production" : "test",
       PORT: SERVER_PORT.toString(),
       DATABASE_PROVIDER: "sqlite",
@@ -94,7 +109,7 @@ export async function startTestServer(options: StartOptions = {}): Promise<strin
       CACHE_DRIVER: "memory",
       REDIS_KEY_PREFIX: "test:",
       SESSION_SECRET: "test-secret-for-e2e",
-      ADMIN_PASSWORD: "test-password",
+      ADMIN_PASSWORD: TEST_ADMIN_PASSWORD,
       LOG_LEVEL: "error",
     },
   });
@@ -133,22 +148,45 @@ export async function stopTestServer(): Promise<void> {
   }
 
   console.log("Stopping test server...");
-  serverProcess.kill("SIGTERM");
-  
-  // Wait for process to exit
+  const pid = serverProcess.pid;
+
   await new Promise<void>((resolve) => {
-    serverProcess?.on("exit", () => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
       console.log("Test server stopped");
       resolve();
-    });
-    
-    // Force kill after 5 seconds
-    setTimeout(() => {
-      if (serverProcess) {
-        serverProcess.kill("SIGKILL");
-        resolve();
+    };
+
+    serverProcess?.on("exit", done);
+
+    // Kill the entire process tree; the `bun run dev` wrapper spawns a
+    // detached next-server child that a plain kill() would orphan (holding
+    // port 3001 and blocking the next run).
+    if (pid) {
+      if (process.platform === "win32") {
+        spawn("taskkill", ["/F", "/T", "/PID", pid.toString()], { stdio: "ignore" });
+      } else {
+        try {
+          process.kill(-pid, "SIGTERM");
+        } catch {
+          serverProcess?.kill("SIGTERM");
+        }
       }
-    }, 5000);
+    } else {
+      serverProcess?.kill("SIGTERM");
+    }
+
+    // Hard-stop fallback so cleanup never blocks longer than needed.
+    setTimeout(() => {
+      try {
+        serverProcess?.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      done();
+    }, 4000);
   });
 
   serverProcess = null;

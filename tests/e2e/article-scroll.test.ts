@@ -171,8 +171,7 @@ describe("Article scroll alignment under the sticky tag bar", () => {
   let context: Awaited<ReturnType<typeof setup>>;
 
   beforeAll(async () => {
-    context = await setup();
-    await seedScrollArticles();
+    context = await setup(seedScrollArticles);
   }, 120_000);
 
   afterAll(async () => {

@@ -37,6 +37,8 @@ Bottom-up layering: each layer depends only on those below it.
 - `src/lib/embeds.ts` - Custom `@[...]( ...)` embed grammar; markdown<->HTML round-trip
 - `src/lib/ext-embeds.ts` - Provider embeds (YouTube, Vimeo, X, etc.)
 - `src/lib/link-embeds.ts` / `src/lib/link-preview.ts` - Generic link-preview cards
+- `src/lib/embed-sizing.ts` - Read/re-render size-capable editor elements (images, embeds, code blocks) for the size toolbar
+- `src/lib/base64-placeholders.ts` - Collapse/expand base64 data URLs to `[base64 data]` placeholders in the markdown editor
 - `src/lib/code-block-render.ts` - Shared code-block rendering for the WYSIWYG preview and the Grok translation pipeline
 
 ### Layer 3: Social Integrations
@@ -87,6 +89,7 @@ in-memory bus + DB polling when Redis is off.
 - `src/components/article-card.tsx` - Article display with in-place expansion and translation toggle
 - `src/components/article-editor.tsx` - Article creation/editing form
 - `src/components/wysiwyg.tsx` - WYSIWYG editor with markdown preview and embeds
+- `src/components/embed-size-dialog.tsx` - Size/preview-lines dialog for the WYSIWYG size toolbar item
 - `src/components/code-block.tsx` - Collapsible highlighted code block
 - `src/components/comment-bar.tsx` - Comment/share/reference controls and form
 - `src/components/share-modal.tsx` - Social share overlay (intent links + native share)
@@ -94,7 +97,7 @@ in-memory bus + DB polling when Redis is off.
 - `src/components/admin-bar.tsx` - Floating admin controls with site settings modal
 - `src/components/footer.tsx` - Footer + top-right controls, legal link modals
 - `src/components/language-switcher.tsx` - Language dropdown for locale selection
-- `src/components/terminal-caret.tsx` - Animated terminal caret masthead effect
+- `src/components/terminal-caret.tsx` - Blinking terminal caret (hacker + medium themes) that rests at the end of the title in view
 - `src/components/live-chat.tsx` - Floating live-chat widget (SSE stream, attachments, availability gate)
 - `src/lib/api-client.ts` - API client with error handling (`ApiClientError`)
 - `src/lib/use-i18n.ts` - Client i18n hook for locale resolution and translations

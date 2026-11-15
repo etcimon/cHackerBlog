@@ -2,7 +2,7 @@ import puppeteer, { Browser, Page } from "puppeteer";
 import { PrismaClient } from "../../src/generated/prisma/client/client";
 import { PrismaLibSql } from "@prisma/adapter-libsql";
 import { config } from "dotenv";
-import { startTestServer, stopTestServer, isServerRunning, SERVER_URL } from "../../scripts/test-server";
+import { startTestServer, stopTestServer, isServerRunning, SERVER_URL, TEST_ADMIN_PASSWORD } from "../../scripts/test-server";
 
 // Load test environment variables
 config({ path: ".env.test" });
@@ -28,7 +28,11 @@ async function truncateDatabase(): Promise<void> {
   console.log("Test database truncated");
 }
 
-export async function setup(): Promise<TestContext> {
+// True when this process started the test server itself (single-file runs);
+// the shared runner owns the server in `bun run test:e2e` runs.
+let ownsServer = false;
+
+export async function setup(seedExtra?: () => Promise<void>): Promise<TestContext> {
   console.log("Setting up e2e test environment...");
 
   // Truncate database before tests
@@ -36,17 +40,19 @@ export async function setup(): Promise<TestContext> {
 
   // Seed test data after truncation
   await seedTestData();
+  await seedExtra?.();
 
   // Start the test server only if not already started by global runner
   // Check if lock file exists (indicates global runner is managing the server)
   const mode = process.env.NODE_ENV === "production" ? "prod" : "dev";
   let baseUrl: string;
-  
+
   if (isServerRunning()) {
     console.log("Using existing test server (managed by global runner)");
     baseUrl = SERVER_URL;
   } else {
     baseUrl = await startTestServer({ mode });
+    ownsServer = true;
   }
 
   const browser = await puppeteer.launch({
@@ -55,6 +61,12 @@ export async function setup(): Promise<TestContext> {
   });
   const page = await browser.newPage();
 
+  // Fixtures are written straight to the DB (no server cache invalidation)
+  // and the readiness probe or a previous test file may already have cached
+  // the anonymous feed — wait out CACHE_TTL_FEED (1s in .env.test) before any
+  // test navigates.
+  await new Promise((r) => setTimeout(r, 1100));
+
   console.log("E2E test environment ready");
   return { browser, page, baseUrl };
 }
@@ -62,10 +74,12 @@ export async function setup(): Promise<TestContext> {
 export async function teardown(context: TestContext): Promise<void> {
   console.log("Tearing down e2e test environment...");
   await context.browser.close();
-  
-  // Only stop server if we started it (not managed by global runner)
-  if (!isServerRunning()) {
+
+  // Only stop the server when this process started it (single-file runs);
+  // under the global runner the lock file marks a server we must leave up.
+  if (ownsServer) {
     await stopTestServer();
+    ownsServer = false;
   }
 }
 
@@ -92,7 +106,7 @@ export async function loginAsAdmin(context: TestContext): Promise<void> {
       console.log("Password input not found in login modal");
       return;
     }
-    await passwordInput.type(process.env.ADMIN_PASSWORD || "changeme");
+    await passwordInput.type(TEST_ADMIN_PASSWORD);
 
     // Submit form by clicking the Unlock button (which has type="submit")
     const submitButton = await page.$('button[type="submit"]');

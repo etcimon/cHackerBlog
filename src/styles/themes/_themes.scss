@@ -118,6 +118,23 @@
   .feed-next-btn:hover {
     box-shadow: 0 8px 20px rgb(0 0 0 / 0.15);
   }
+
+  // Terminal caret: a phosphor-green CRT pixel cluster on the white page.
+  .terminal-caret {
+    --cb-caret: 30 215 96;
+    background-color: rgb(var(--cb-caret));
+    background-image:
+      linear-gradient(to right, rgb(var(--cb-bg) / 0.6) 1px, transparent 1px),
+      linear-gradient(to bottom, rgb(var(--cb-bg) / 0.6) 1px, transparent 1px);
+    background-size: var(--caret-cell, 3px) var(--caret-cell, 3px);
+    box-shadow:
+      0 0 2px rgb(var(--cb-caret)),
+      0 0 8px rgb(var(--cb-caret) / 0.7),
+      0 0 16px rgb(var(--cb-caret) / 0.35);
+    animation:
+      terminal-caret-blink 1.05s steps(1) infinite,
+      terminal-caret-flicker 0.12s steps(2) infinite;
+  }
 }
 
 [data-theme="substack"] {

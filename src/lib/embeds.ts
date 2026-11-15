@@ -786,9 +786,12 @@ export function buildImageHtml({ alt, src, size }: ImageInput): string {
 
   const cls = `cb-img ${sizeClass}`.trim();
   const styleAttr = sizeStyle ? ` style="${sizeStyle}"` : "";
+  // Base64 data: URLs already live in `src`; duplicating them into data-src
+  // would double a multi-MB payload in the stored HTML.
+  const dataSrcAttr = /^data:/i.test(src) ? "" : ` data-src="${aSrc}"`;
   return (
     `<img class="${cls}" src="${aSrc}" alt="${aAlt}" ` +
-    `data-cb-img="1" data-alt="${aAlt}" data-src="${aSrc}" ` +
+    `data-cb-img="1" data-alt="${aAlt}"${dataSrcAttr} ` +
     `data-size="${escapeAttr(sizeSpec)}"${styleAttr} />`
   );
 }

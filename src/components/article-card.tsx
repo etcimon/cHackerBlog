@@ -107,6 +107,11 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
         ? content
         : item.previewHtml;
 
+  // React re-assigns innerHTML whenever this object's identity changes, which
+  // would discard link-card hydration and code-block state on unrelated
+  // re-renders — memoize so only a real bodyHtml change re-injects the markup.
+  const bodyMarkup = useMemo(() => ({ __html: bodyHtml ?? "" }), [bodyHtml]);
+
   // Wire the collapse toggles synchronously after every body (re-)render. Doing
   // this in a layout effect (not gated behind async highlighting) guarantees the
   // toggles work no matter how many code blocks/languages are present, and
@@ -302,7 +307,10 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
                 : t("translation.show")}
           </button>
         )}
-        <h2 className="font-heading text-3xl font-bold leading-tight text-fg">
+        <h2
+          data-caret-title
+          className="font-heading text-3xl font-bold leading-tight text-fg"
+        >
           <a
             href={articleHref}
             className="transition-colors hover:text-accent"
@@ -331,7 +339,7 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
           ref={articleBodyRef}
           className={`article-body article-rendered text-lg text-fg/90${open && !expandedDone ? " animate-expand overflow-hidden" : ""}`}
           onAnimationEnd={() => setExpandedDone(true)}
-          dangerouslySetInnerHTML={{ __html: bodyHtml }}
+          dangerouslySetInnerHTML={bodyMarkup}
         />
       )}
 
