@@ -43,7 +43,10 @@ interface Props {
 }
 
 export function ArticleCard({ item, expanded = false, onEdit }: Props) {
-  const [open, setOpen] = useState(expanded);
+  // Expanded cards whose body wasn't inlined by the feed/locator payload start
+  // collapsed (preview + button) and self-fetch via the effect below — never
+  // blank.
+  const [open, setOpen] = useState(expanded && item.content !== undefined);
   const [expandedDone, setExpandedDone] = useState(false);
   const [content, setContent] = useState<string | undefined>(item.content);
   const [loading, setLoading] = useState(false);
@@ -176,28 +179,45 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
     }
   };
 
-  const loadFull = useCallback(async () => {
-    if (content !== undefined) {
-      setExpandedDone(false);
-      setOpen(true);
-      return;
-    }
-    setLoading(true);
-    try {
-      const data = await api.get<{ content: string }>(`/api/articles/${item.id}`);
-      setContent(data.content);
-      setExpandedDone(false);
-      setOpen(true);
-      // Scroll to the article's top anchor after content loads
-      setTimeout(() => {
-        scrollToAnchor(`${item.slug}-top`);
-      }, 100);
-    } catch (err) {
-      toast.error(err instanceof ApiClientError ? err.message : t("article.failedLoad"));
-    } finally {
-      setLoading(false);
-    }
-  }, [content, item.id, toast, isAdmin]);
+  const loadFull = useCallback(
+    async (opts?: { scroll?: boolean }) => {
+      const scroll = opts?.scroll ?? true;
+      if (content !== undefined) {
+        setExpandedDone(false);
+        setOpen(true);
+        return;
+      }
+      setLoading(true);
+      try {
+        const data = await api.get<{ content: string }>(`/api/articles/${item.id}`);
+        setContent(data.content);
+        setExpandedDone(false);
+        setOpen(true);
+        // Scroll to the article's top anchor after content loads
+        if (scroll) {
+          setTimeout(() => {
+            scrollToAnchor(`${item.slug}-top`);
+          }, 100);
+        }
+      } catch (err) {
+        toast.error(err instanceof ApiClientError ? err.message : t("article.failedLoad"));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [content, item.id, item.slug, toast, isAdmin],
+  );
+
+  // An expanded card asked to render without an inlined body (e.g.
+  // FEED_EXPANDED_COUNT reaching past the first page, or a located target deep
+  // in a re-scoped feed) loads it itself instead of rendering blank. The ref
+  // keeps StrictMode's double effect from firing two requests.
+  const autoLoadRef = useRef(false);
+  useEffect(() => {
+    if (!expanded || content !== undefined || autoLoadRef.current) return;
+    autoLoadRef.current = true;
+    void loadFull({ scroll: false });
+  }, [expanded, content, loadFull]);
 
   const handleTranslate = useCallback(async () => {
     if (translated) {
@@ -346,7 +366,7 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
       <div className="mt-4 flex items-center gap-3">
         {!open && (
           <button
-            onClick={loadFull}
+            onClick={() => void loadFull()}
             disabled={loading}
             className="inline-flex items-center gap-1.5 rounded-md border border-accent px-4 py-2 text-sm font-semibold text-accent transition-colors hover:bg-accent hover:text-bg disabled:opacity-50"
           >

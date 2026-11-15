@@ -4,9 +4,10 @@
  * This prevents port conflicts and ensures consistent server state across all tests.
  */
 import { spawn, ChildProcess } from "child_process";
+import { connect } from "net";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
-import { existsSync, mkdirSync, writeFileSync, unlinkSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync, unlinkSync } from "fs";
 import { config } from "dotenv";
 
 // The developer's .env (auto-loaded by bun) must not leak into the test
@@ -23,6 +24,11 @@ let serverProcess: ChildProcess | null = null;
 const SERVER_PORT = 3001;
 const SERVER_URL = `http://localhost:${SERVER_PORT}`;
 const LOCK_FILE = join(__dirname, "..", ".test-server.lock");
+
+// E2E files that need per-file server env (FEED_* etc.) run in their own
+// phase without the shared server — setup() starts/stops a dedicated server
+// per describe block.
+const OWN_SERVER_TESTS = ["tests/e2e/feed-loading.test.ts"];
 
 interface StartOptions {
   mode?: "dev" | "prod";
@@ -160,6 +166,31 @@ async function stopTestServer(): Promise<void> {
 
   serverProcess = null;
   removeLockFile();
+
+  // The killed tree can keep the socket briefly; the own-server phase starts
+  // a fresh server on the same port and must not hit EADDRINUSE.
+  await waitForPortFree(SERVER_PORT);
+}
+
+/** Poll a TCP connect until the port is free (or ~10s elapses). */
+async function waitForPortFree(port: number, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const inUse = await new Promise<boolean>((resolve) => {
+      const sock = connect({ host: "127.0.0.1", port });
+      sock.once("connect", () => {
+        sock.destroy();
+        resolve(true);
+      });
+      sock.once("error", () => resolve(false));
+      sock.setTimeout(1000, () => {
+        sock.destroy();
+        resolve(false);
+      });
+    });
+    if (!inUse) return;
+    await new Promise((r) => setTimeout(r, 200));
+  }
 }
 
 async function waitForServerReady(url: string, maxAttempts = 30): Promise<void> {
@@ -187,45 +218,68 @@ async function waitForServerReady(url: string, maxAttempts = 30): Promise<void> 
 
 async function runE2ETests(): Promise<void> {
   const mode = process.env.NODE_ENV === "production" ? "prod" : "dev";
-  
-  try {
-    // Start server
-    await startTestServer({ mode });
-    
-    // Run E2E tests
-    console.log("Running E2E tests...");
-    const testProcess = spawn("bun", ["test", "tests/e2e"], {
-      cwd: join(__dirname, ".."),
-      stdio: "inherit",
-      env: {
-        ...process.env,
-        NODE_ENV: mode === "prod" ? "production" : "test",
-        DATABASE_PROVIDER: "sqlite",
-        DATABASE_URL: "file:./test.sqlite",
-        // In-memory cache/KV: Redis is never imported or connected (see kv.ts).
-        CACHE_DRIVER: "memory",
-        REDIS_KEY_PREFIX: "test:",
-        SESSION_SECRET: "test-secret-for-e2e",
-        ADMIN_PASSWORD: "test-password",
-        LOG_LEVEL: "error",
-      },
-    });
+  const projectRoot = join(__dirname, "..");
+  const testEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    NODE_ENV: mode === "prod" ? "production" : "test",
+    DATABASE_PROVIDER: "sqlite",
+    DATABASE_URL: "file:./test.sqlite",
+    // In-memory cache/KV: Redis is never imported or connected (see kv.ts).
+    CACHE_DRIVER: "memory",
+    REDIS_KEY_PREFIX: "test:",
+    SESSION_SECRET: "test-secret-for-e2e",
+    ADMIN_PASSWORD: "test-password",
+    LOG_LEVEL: "error",
+  };
 
-    await new Promise<void>((resolve, reject) => {
+  const runPhase = (files: string[], label: string): Promise<void> =>
+    new Promise<void>((resolve, reject) => {
+      console.log(`Running ${label}...`);
+      const testProcess = spawn("bun", ["test", ...files], {
+        cwd: projectRoot,
+        stdio: "inherit",
+        env: testEnv,
+      });
       testProcess.on("exit", (code) => {
         if (code === 0) {
           resolve();
         } else {
-          reject(new Error(`E2E tests failed with exit code ${code}`));
+          reject(new Error(`${label} failed with exit code ${code}`));
         }
       });
     });
 
-    console.log("E2E tests passed");
+  // Phase 1: every e2e file except the own-server ones, against the shared
+  // server started below.
+  const sharedFiles = readdirSync(join(projectRoot, "tests", "e2e"))
+    .filter((f) => f.endsWith(".test.ts"))
+    .map((f) => `tests/e2e/${f}`)
+    .filter((f) => !OWN_SERVER_TESTS.includes(f))
+    .sort();
+
+  let failure: Error | null = null;
+  try {
+    await startTestServer({ mode });
+    try {
+      await runPhase(sharedFiles, "shared-server E2E tests");
+    } catch (err) {
+      failure = err as Error;
+      console.error(err);
+    }
   } finally {
-    // Stop server
     await stopTestServer();
   }
+
+  // Phase 2: own-server files manage their own server env per describe.
+  try {
+    await runPhase(OWN_SERVER_TESTS, "own-server E2E tests");
+  } catch (err) {
+    failure = failure ?? (err as Error);
+    console.error(err);
+  }
+
+  if (failure) throw failure;
+  console.log("E2E tests passed");
 }
 
 // Handle process termination

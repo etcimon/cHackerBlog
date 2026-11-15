@@ -5,6 +5,7 @@
  * Uses a singleton pattern to prevent multiple server instances.
  */
 import { spawn, ChildProcess } from "child_process";
+import { connect } from "net";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { existsSync, mkdirSync, writeFileSync, unlinkSync } from "fs";
@@ -30,6 +31,8 @@ const LOCK_FILE = join(__dirname, "..", ".test-server.lock");
 
 interface StartOptions {
   mode?: "dev" | "prod";
+  /** Extra env vars layered over .env.test (e.g. per-file FEED_* tuning). */
+  env?: Record<string, string>;
 }
 
 /**
@@ -84,8 +87,18 @@ export async function startTestServer(options: StartOptions = {}): Promise<strin
     return SERVER_URL;
   }
 
-  const { mode = "dev" } = options;
+  const { mode = "dev", env: extraEnv } = options;
   console.log(`Starting Next.js test server in ${mode} mode...`);
+
+  // Never kill a process we did not start: if something already listens on
+  // the test port (a dev server, a leftover from another run), fail fast
+  // instead of spawning into EADDRINUSE or probing a foreign server.
+  const portOwner = await portOwnerPid(SERVER_PORT);
+  if (portOwner) {
+    throw new Error(
+      `Port ${SERVER_PORT} is already in use by PID ${portOwner}; stop that process (or a leftover test server) and re-run.`,
+    );
+  }
 
   // Determine command based on mode
   const command = mode === "prod" ? "start" : "dev";
@@ -101,6 +114,7 @@ export async function startTestServer(options: StartOptions = {}): Promise<strin
     env: {
       ...process.env,
       ...envTest,
+      ...extraEnv,
       NODE_ENV: mode === "prod" ? "production" : "test",
       PORT: SERVER_PORT.toString(),
       DATABASE_PROVIDER: "sqlite",
@@ -191,6 +205,89 @@ export async function stopTestServer(): Promise<void> {
 
   serverProcess = null;
   removeLockFile();
+
+  // The killed wrapper can leave orphaned grandchildren (next-server) that
+  // still hold the port — an immediate restart in the same process (per-file
+  // env servers) must not hit EADDRINUSE. Kill whoever owns the port, then
+  // wait for it to be released.
+  const ownerPid = await portOwnerPid(SERVER_PORT);
+  if (ownerPid) {
+    if (process.platform === "win32") {
+      spawn("taskkill", ["/F", "/T", "/PID", String(ownerPid)], {
+        stdio: "ignore",
+      });
+    } else {
+      try {
+        process.kill(ownerPid, "SIGKILL");
+      } catch {
+        // already gone
+      }
+    }
+  }
+  await waitForPortFree(SERVER_PORT);
+}
+
+/** PID listening on `port`, or null when the port is free/unreadable. */
+async function portOwnerPid(port: number): Promise<number | null> {
+  if (process.platform === "win32") {
+    return new Promise((resolve) => {
+      const p = spawn("netstat", ["-ano"], { stdio: ["ignore", "pipe", "ignore"] });
+      let out = "";
+      p.stdout.on("data", (d) => (out += d.toString()));
+      p.on("close", () => {
+        for (const line of out.split(/\r?\n/)) {
+          const cols = line.trim().split(/\s+/);
+          //   TCP  0.0.0.0:3001  0.0.0.0:0  LISTENING  20564
+          if (cols.length >= 5 && cols[3] === "LISTENING") {
+            const localPort = cols[1].split(":").pop();
+            if (localPort === String(port)) {
+              const pid = Number.parseInt(cols[4], 10);
+              if (Number.isFinite(pid)) {
+                resolve(pid);
+                return;
+              }
+            }
+          }
+        }
+        resolve(null);
+      });
+      p.on("error", () => resolve(null));
+    });
+  }
+  // POSIX best-effort via lsof (the process-group kill above normally suffices).
+  return new Promise((resolve) => {
+    const p = spawn("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"], {
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    let out = "";
+    p.stdout.on("data", (d) => (out += d.toString()));
+    p.on("close", () => {
+      const pid = Number.parseInt(out.trim().split(/\s+/)[0] ?? "", 10);
+      resolve(Number.isFinite(pid) ? pid : null);
+    });
+    p.on("error", () => resolve(null));
+  });
+}
+
+/** Poll a TCP connect until the port is free (or ~10s elapses). */
+async function waitForPortFree(port: number, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const inUse = await new Promise<boolean>((resolve) => {
+      const sock = connect({ host: "127.0.0.1", port });
+      sock.once("connect", () => {
+        sock.destroy();
+        resolve(true);
+      });
+      sock.once("error", () => resolve(false));
+      sock.setTimeout(1000, () => {
+        sock.destroy();
+        resolve(false);
+      });
+    });
+    if (!inUse) return;
+    await new Promise((r) => setTimeout(r, 200));
+  }
 }
 
 /**

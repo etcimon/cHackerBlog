@@ -130,6 +130,7 @@ export async function getFeed(query: FeedQuery): Promise<FeedPage> {
         { pinned: "desc" }, // Pinned articles first
         { pinnedAt: "desc" }, // Most recently pinned first
         { publishedAt: "desc" }, // Then by published date
+        { id: "desc" }, // Unique tie-breaker so cursor pages never skip/dup
       ],
       take: take + 1, // fetch one extra to compute nextCursor
       ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
@@ -170,6 +171,7 @@ export async function getFeed(query: FeedQuery): Promise<FeedPage> {
         { pinned: "desc" }, // Pinned articles first
         { pinnedAt: "desc" }, // Most recently pinned first
         { publishedAt: "desc" }, // Then by published date
+        { id: "desc" }, // Unique tie-breaker so cursor pages never skip/dup
       ],
       take: take + 1, // fetch one extra to compute nextCursor
       ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),

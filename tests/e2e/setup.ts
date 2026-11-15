@@ -32,7 +32,10 @@ async function truncateDatabase(): Promise<void> {
 // the shared runner owns the server in `bun run test:e2e` runs.
 let ownsServer = false;
 
-export async function setup(seedExtra?: () => Promise<void>): Promise<TestContext> {
+export async function setup(
+  seedExtra?: () => Promise<void>,
+  options?: { env?: Record<string, string> },
+): Promise<TestContext> {
   console.log("Setting up e2e test environment...");
 
   // Truncate database before tests
@@ -47,11 +50,19 @@ export async function setup(seedExtra?: () => Promise<void>): Promise<TestContex
   const mode = process.env.NODE_ENV === "production" ? "prod" : "dev";
   let baseUrl: string;
 
+  // Custom env requires this process to own the server: a runner-owned shared
+  // server was spawned with fixed env and cannot be reconfigured.
+  if (options?.env && isServerRunning() && !ownsServer) {
+    throw new Error(
+      "This e2e file needs its own test server (custom env); run it directly or via bun run test:e2e, which runs it in a separate phase.",
+    );
+  }
+
   if (isServerRunning()) {
     console.log("Using existing test server (managed by global runner)");
     baseUrl = SERVER_URL;
   } else {
-    baseUrl = await startTestServer({ mode });
+    baseUrl = await startTestServer({ mode, env: options?.env });
     ownsServer = true;
   }
 

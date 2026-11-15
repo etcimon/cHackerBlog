@@ -62,10 +62,19 @@ export function Feed({
   const sentinelRef = useRef<HTMLDivElement>(null);
   const loadingRef = useRef(false);
   const scrolledRef = useRef(false);
+  // Bumped by every reset fetch; a response whose generation is stale belongs
+  // to a superseded request (e.g. a tag switch during an in-flight page) and
+  // must not touch state.
+  const genRef = useRef(0);
 
   const fetchPage = useCallback(
     async (opts: { cursor?: string | null; tag?: string | null; reset?: boolean }) => {
-      if (loadingRef.current) return;
+      // Resets supersede whatever is in flight — a tag switch must never be
+      // silently dropped just because a scroll/prefetch request is loading.
+      const isReset = opts.reset === true;
+      if (!isReset && loadingRef.current) return;
+      if (isReset) genRef.current += 1;
+      const gen = genRef.current;
       loadingRef.current = true;
       setLoading(true);
       try {
@@ -75,12 +84,15 @@ export function Feed({
         if (isAdmin) params.set("includeUnpublished", "true");
         params.set("take", pageSize.toString());
         const page = await api.get<FeedPage>(`/api/feed?${params.toString()}`);
+        if (gen !== genRef.current) return undefined;
         setItems((prev) => (opts.reset ? page.items : [...prev, ...page.items]));
         setCursor(page.nextCursor);
         return page;
       } finally {
-        loadingRef.current = false;
-        setLoading(false);
+        if (gen === genRef.current) {
+          loadingRef.current = false;
+          setLoading(false);
+        }
       }
     },
     [isAdmin, pageSize],

@@ -12,6 +12,16 @@ This directory contains the test suite for cHackerBlog, including end-to-end tes
   - `feed.test.ts` - Feed and infinite scroll tests
   - `code-block-collapse.test.ts` - Code-block expand/collapse across infinite
     scroll (10 languages/sizes) + no-flicker-after-edit regression
+  - `article-scroll.test.ts` - Article-route scroll alignment under the sticky
+    tag bar (desktop + wrapped mobile bar)
+  - `link-embed-hydration.test.ts` - Rich link cards keep metadata after an
+    article is edited and saved
+  - `embed-sizing.test.ts` - WYSIWYG size toolbar + base64 placeholder
+    round-trip, incl. multiple distinct base64 images
+  - `terminal-caret.test.ts` - Terminal caret follows the title in view
+    (hacker + medium CRT variants)
+  - `feed-loading.test.ts` - Feed pagination/tag-switch/article-route loading
+    under different FEED_* env configs (runs own server per config)
 
 - `unit/` - Unit tests
   - `cache.test.ts` - KV/cache layer tests

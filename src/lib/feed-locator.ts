@@ -7,9 +7,10 @@
  *    feed to the target's *rarest* tag, which both tightens topical relevance and
  *    shrinks the number of rows preceding the target.
  *  - Ranking replays getFeed's EXACT composite order
- *    (pinned desc, pinnedAt desc, publishedAt desc) by doing a lightweight
- *    id+slug scan over the scoped set, then materializes only a bounded prefix
- *    [0 .. targetIndex + buffer] with the full projection.
+ *    (pinned desc, pinnedAt desc, publishedAt desc, id desc) by doing a
+ *    lightweight id+slug scan over the scoped set, then materializes a bounded
+ *    window ending at targetIndex + buffer (a prefix when the target is near
+ *    the top, a slid window when it is deep).
  *  - The result is cache-coherent (memoized in the "feed" category, invalidated
  *    by the same article/feed mutations) and feeds straight into <Feed>.
  */
@@ -24,6 +25,7 @@ const FEED_ORDER = [
   { pinned: "desc" as const },
   { pinnedAt: "desc" as const },
   { publishedAt: "desc" as const },
+  { id: "desc" as const }, // Unique tie-breaker, same as getFeed
 ];
 
 /** Hard ceiling on how many items a single first-load may materialize. */
@@ -113,36 +115,48 @@ async function computeFirstLoad(
   // Should always be found (target satisfies `where`), but guard defensively.
   const targetIndex = rank < 0 ? 0 : rank;
 
-  // 4. Materialize a bounded prefix [0 .. targetIndex + buffer].
+  // 4. Materialize a bounded window ending at targetIndex + buffer. When the
+  // target sits deeper than MAX_FIRST_LOAD the window slides so it still ENDS
+  // at the target's trailing context — the client only ever scrolls forward.
   const buffer = env.FEED_PAGE_SIZE; // one extra viewport of trailing context
-  const fetchSize = Math.min(targetIndex + 1 + buffer, MAX_FIRST_LOAD);
+  const end = targetIndex + 1 + buffer;
+  const start = Math.max(0, end - MAX_FIRST_LOAD);
   const rows = await prisma.article.findMany({
     where,
     orderBy: FEED_ORDER,
-    take: fetchSize,
+    skip: start,
+    take: end - start,
     include: {
       tags: { select: { name: true, slug: true } },
       _count: { select: { comments: { where: { approved: true } } } },
     },
   });
 
+  // Index of the target within the returned window.
+  const localTargetIndex = targetIndex - start;
+
   const items = rows.map((a, index) =>
-    // Expand all articles up to and including the target.
+    // Inline content only for what the client renders expanded: the located
+    // target, the leading FEED_EXPANDED_COUNT window items, or everything
+    // under FEED_EXPAND_ALL. The rest render collapsed and fetch on demand.
     mapFeedRow(a, {
-      includeContent: index <= targetIndex || env.FEED_EXPAND_ALL,
+      includeContent:
+        env.FEED_EXPAND_ALL ||
+        index === localTargetIndex ||
+        index < env.FEED_EXPANDED_COUNT,
     }),
   );
 
   // nextCursor continues the SAME scoped order so <Feed> infinite-scroll resumes.
   const nextCursor =
-    order.length > rows.length ? rows[rows.length - 1]!.id : null;
+    order.length > start + rows.length ? rows[rows.length - 1]!.id : null;
 
   return {
     items,
     nextCursor,
     targetSlug: slug,
     targetId: target.id,
-    targetIndex: Math.min(targetIndex, items.length - 1),
+    targetIndex: localTargetIndex,
     tag,
   };
 }
