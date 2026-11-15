@@ -142,24 +142,6 @@ function expectCaretAtTitle(s: CaretState): void {
   expect(cy).toBeLessThanOrEqual(s.title!.bottom + 2);
 }
 
-/** Pause the blink and screenshot ~400x120 px around the caret. */
-async function shotCaret(page: any, path: string): Promise<void> {
-  const rect = await page.evaluate(() => {
-    const el = document.querySelector(".terminal-caret");
-    if (!el) return null;
-    (el as HTMLElement).style.animation = "none";
-    const r = el.getBoundingClientRect();
-    return {
-      x: Math.max(0, r.left + r.width / 2 - 200),
-      y: Math.max(0, r.top + r.height / 2 - 60),
-      width: 400,
-      height: 120,
-    };
-  });
-  if (!rect) throw new Error("caret not found for screenshot");
-  await page.screenshot({ path, clip: rect });
-}
-
 describe("Terminal caret follows the title in view", () => {
   let context: Awaited<ReturnType<typeof setup>>;
 
@@ -188,7 +170,6 @@ describe("Terminal caret follows the title in view", () => {
     expectCaretAtTitle(s);
     expect(s.className).toContain("terminal-caret--underscore");
     expect(s.zIndex).toBe("30");
-    await shotCaret(page, "tmp/baseline/caret-hacker.png");
 
     // 2. Scroll caret-a2's top anchor into view -> its h2 takes focus.
     await page.evaluate(() =>
@@ -286,7 +267,6 @@ describe("Terminal caret follows the title in view", () => {
       expect(Math.round(s.caret!.width)).toBe(5 * cell);
       expect(Math.round(s.caret!.height)).toBe(2 * cell);
       expectCaretAtTitle(s);
-      await shotCaret(page, "tmp/baseline/caret-medium.png");
     } finally {
       await page.close();
     }

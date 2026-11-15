@@ -3,15 +3,20 @@
  * Validates that highlight.js is properly integrated with marked
  * and that code blocks are highlighted correctly.
  */
-import { marked } from "marked";
+import { Marked } from "marked";
 import hljs from "highlight.js";
 import {
   registerEmbedExtension,
 } from "@/lib/embeds";
 
+// Private instance: mutating the shared `marked` singleton here would leak the
+// hljs code renderer into other test files (e.g. grok-translation) depending
+// on file execution order.
+const marked = new Marked();
+
 describe("Syntax Highlighting", () => {
   beforeAll(() => {
-    // Register the marked extension globally
+    // Register the embed extension on this instance only
     registerEmbedExtension(marked);
 
     // Configure marked to use highlight.js for syntax highlighting
