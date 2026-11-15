@@ -17,7 +17,7 @@
  */
 import { handler, ok, AppError, Errors } from "@/lib/errors";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
-import { assertSafeUrl, parseHtmlMeta, type LinkPreview } from "@/lib/link-preview";
+import { assertSafeUrl, fetchWithSafeRedirects, parseHtmlMeta, type LinkPreview } from "@/lib/link-preview";
 
 export const runtime = "nodejs";
 
@@ -38,49 +38,57 @@ export const GET = handler(async (req: Request) => {
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  let res: Response;
   try {
-    res = await fetch(target.href, {
-      signal: controller.signal,
-      redirect: "follow",
-      headers: {
-        // A desktop UA elicits richer OG tags from many sites.
-        "user-agent":
-          "Mozilla/5.0 (compatible; cHackerBlog-LinkPreview/1.0; +https://github.com/etcimon)",
-        accept: "text/html,application/xhtml+xml",
-      },
-    });
-  } catch {
-    clearTimeout(timer);
-    throw new AppError("Failed to fetch the URL", 502, "FETCH_FAILED");
-  }
-  clearTimeout(timer);
-
-  const contentType = res.headers.get("content-type") || "";
-  if (!/text\/html|application\/xhtml\+xml/i.test(contentType)) {
-    // Not an HTML page (e.g. a direct file). Nothing to preview; return bare.
-    return ok<LinkPreview>({ url: target.href });
-  }
-
-  // Read up to MAX_BYTES so we never buffer an enormous document.
-  const reader = res.body?.getReader();
-  let html = "";
-  if (reader) {
-    const decoder = new TextDecoder();
-    let received = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      received += value.byteLength;
-      html += decoder.decode(value, { stream: true });
-      if (received >= MAX_BYTES || /<\/head>/i.test(html)) {
-        await reader.cancel().catch(() => {});
-        break;
-      }
+    let res: Response;
+    let finalUrl: URL;
+    try {
+      // Redirects are followed manually so every hop is SSRF re-validated.
+      const out = await fetchWithSafeRedirects(target, {
+        signal: controller.signal,
+        headers: {
+          // A desktop UA elicits richer OG tags from many sites.
+          "user-agent":
+            "Mozilla/5.0 (compatible; cHackerBlog-LinkPreview/1.0; +https://github.com/etcimon)",
+          accept: "text/html,application/xhtml+xml",
+        },
+      });
+      res = out.res;
+      finalUrl = out.url;
+    } catch (e) {
+      if (e instanceof AppError) throw e;
+      throw new AppError("Failed to fetch the URL", 502, "FETCH_FAILED");
     }
-  } else {
-    html = (await res.text()).slice(0, MAX_BYTES);
-  }
 
-  return ok<LinkPreview>(parseHtmlMeta(html, target.href));
+    const contentType = res.headers.get("content-type") || "";
+    if (!/text\/html|application\/xhtml\+xml/i.test(contentType)) {
+      // Not an HTML page (e.g. a direct file). Nothing to preview; return bare.
+      return ok<LinkPreview>({ url: target.href });
+    }
+
+    // Read up to MAX_BYTES so we never buffer an enormous document.
+    const reader = res.body?.getReader();
+    let html = "";
+    if (reader) {
+      const decoder = new TextDecoder();
+      let received = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        received += value.byteLength;
+        html += decoder.decode(value, { stream: true });
+        if (received >= MAX_BYTES || /<\/head>/i.test(html)) {
+          await reader.cancel().catch(() => {});
+          break;
+        }
+      }
+    } else {
+      html = (await res.text()).slice(0, MAX_BYTES);
+    }
+
+    // Relative image URLs resolve against the final (post-redirect) URL, but
+    // the reported url stays the one the caller asked for.
+    return ok<LinkPreview>({ ...parseHtmlMeta(html, finalUrl.href), url: target.href });
+  } finally {
+    clearTimeout(timer);
+  }
 });

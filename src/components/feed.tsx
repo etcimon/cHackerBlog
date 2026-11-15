@@ -17,6 +17,7 @@ import { AdminBar } from "@/components/admin-bar";
 import { ArticleEditor } from "@/components/article-editor";
 import { FeedLoader } from "@/components/feed-loader";
 import { useAdmin } from "@/components/admin-context";
+import { scrollToAnchor, stickyOffset } from "@/lib/scroll";
 
 interface Props {
   initialPage: FeedPage;
@@ -57,8 +58,6 @@ export function Feed({
   const [creating, setCreating] = useState(false);
   const [allTags, setAllTags] = useState<TagItem[]>(tags);
   const [initialLoaded, setInitialLoaded] = useState(false);
-  const [loadedAnchors, setLoadedAnchors] = useState<Set<string>>(new Set());
-  const [nextAnchorIndex, setNextAnchorIndex] = useState(1);
 
   const sentinelRef = useRef<HTMLDivElement>(null);
   const loadingRef = useRef(false);
@@ -78,12 +77,6 @@ export function Feed({
         const page = await api.get<FeedPage>(`/api/feed?${params.toString()}`);
         setItems((prev) => (opts.reset ? page.items : [...prev, ...page.items]));
         setCursor(page.nextCursor);
-        // Update loaded anchors
-        setLoadedAnchors((prev) => {
-          const newSet = opts.reset ? new Set<string>() : new Set(prev);
-          page.items.forEach((item) => newSet.add(`${item.slug}-top`));
-          return newSet;
-        });
         return page;
       } finally {
         loadingRef.current = false;
@@ -99,8 +92,6 @@ export function Feed({
       setActiveTag(slug);
       setItems([]);
       setCursor(null);
-      setLoadedAnchors(new Set());
-      setNextAnchorIndex(1);
       window.scrollTo(0, 0);
       void fetchPage({ tag: slug, reset: true });
     },
@@ -117,7 +108,7 @@ export function Feed({
     if (items.length > 0) {
       setItems([]);
       setCursor(null);
-      void fetchPage({ reset: true });
+      void fetchPage({ tag: activeTag, reset: true });
     }
     // Intentionally runs only on admin-status change, not on every items update.
   }, [isAdmin, fetchPage]);
@@ -140,40 +131,26 @@ export function Feed({
   }, [isAdmin, initialLoaded, ready, fetchPage, initialPage, initialTargetSlug]);
 
   // First-load scroll: when useHashScroll is true, append the hash to the URL
-  // and manually scroll to the top anchor after DOM is fully rendered.
+  // for reference. Either way, scroll the target's top anchor into view once
+  // the DOM has settled (scrollToAnchor keeps it aligned while late layout
+  // shifts — expand animations, images — finish moving it).
   useEffect(() => {
     if (!initialTargetSlug || scrolledRef.current) return;
     if (!items.some((i) => i.slug === initialTargetSlug)) return;
 
-    const scrollToTop = () => {
-      const el = document.getElementById(`${initialTargetSlug}-top`);
-      if (!el) return;
-      scrolledRef.current = true;
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
-    };
-
     if (useHashScroll) {
-      // Append hash to URL for reference, then manually scroll after DOM is ready
       const currentUrl = new URL(window.location.href);
       currentUrl.hash = `${initialTargetSlug}-top`;
       window.history.replaceState({}, "", currentUrl.toString());
-
-      // Wait for DOM to be fully rendered before scrolling
-      const timeout = setTimeout(scrollToTop, 300);
-      return () => clearTimeout(timeout);
-    } else {
-      // Manual scroll to header element with immediate attempt and fallback
-      const el = document.getElementById(`${initialTargetSlug}-header`);
-      if (el) {
-        scrolledRef.current = true;
-        requestAnimationFrame(() =>
-          el.scrollIntoView({ behavior: "smooth", block: "start" }),
-        );
-      } else {
-        const timeout = setTimeout(scrollToTop, 300);
-        return () => clearTimeout(timeout);
-      }
     }
+
+    const anchorId = `${initialTargetSlug}-top`;
+    const timeout = setTimeout(() => {
+      if (!document.getElementById(anchorId)) return;
+      scrolledRef.current = true;
+      scrollToAnchor(anchorId);
+    }, 300);
+    return () => clearTimeout(timeout);
   }, [items, initialTargetSlug, useHashScroll]);
 
   // Infinite scroll via IntersectionObserver, with eager multi-page prefetch.
@@ -225,29 +202,25 @@ export function Feed({
       window.history.replaceState({}, "", currentUrl.toString());
       // Wait for DOM to render the freshly loaded items before scrolling.
       setTimeout(() => {
-        const el = document.getElementById(`${editingSlug}-top`);
-        if (el) {
-          el.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
+        scrollToAnchor(`${editingSlug}-top`);
       }, 300);
     }
   }, [activeTag, editing?.slug, fetchPage]);
 
   const handleNextPost = useCallback(() => {
-    const anchors = Array.from(loadedAnchors);
-    
-    if (nextAnchorIndex < anchors.length) {
-      const nextAnchor = anchors[nextAnchorIndex];
-      const el = document.getElementById(nextAnchor);
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "start" });
-        setNextAnchorIndex(nextAnchorIndex + 1);
-      }
-    }
-  }, [loadedAnchors, nextAnchorIndex]);
+    const offset = stickyOffset();
+    // The "current" post is the last one whose top anchor has reached the
+    // sticky-chrome line; at the top of the feed that's the first post.
+    let current = 0;
+    items.forEach((i, idx) => {
+      const el = document.getElementById(`${i.slug}-top`);
+      if (el && el.getBoundingClientRect().top <= offset + 4) current = idx;
+    });
+    const next = items[current + 1];
+    if (next) scrollToAnchor(`${next.slug}-top`);
+  }, [items]);
 
-  // Show next button if there's a next anchor available at the current index
-  const showNextButton = nextAnchorIndex < loadedAnchors.size;
+  const showNextButton = items.length > 1;
 
   return (
     <>
@@ -283,7 +256,7 @@ export function Feed({
       {showNextButton && (
         <button
           onClick={handleNextPost}
-          className="feed-next-btn fixed bottom-6 right-6 rounded-full border border-border/50 bg-bg/80 p-3 text-fg/70 backdrop-blur-sm transition-all hover:bg-accent/10 hover:text-accent hover:border-accent/30"
+          className="feed-next-btn fixed bottom-20 right-3 sm:bottom-24 sm:right-5 rounded-full border border-border/50 bg-bg/80 p-3 text-fg/70 backdrop-blur-sm transition-all hover:bg-accent/10 hover:text-accent hover:border-accent/30"
           title="Next post"
         >
           <ChevronDown className="h-5 w-5" />

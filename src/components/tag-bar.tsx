@@ -4,7 +4,7 @@
  * Top-of-feed tag filter bar. Selecting a tag drives the feed query (the active
  * tag is lifted to the Feed component). "All" clears the filter.
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { X } from "lucide-react";
 import type { TagItem } from "@/lib/types";
@@ -25,6 +25,27 @@ export function TagBar({ tags, active, onSelect, isAdmin = false, totalCount }: 
   const pathname = usePathname();
   const toast = useToast();
   const [deletingTag, setDeletingTag] = useState<string | null>(null);
+  const navRef = useRef<HTMLElement>(null);
+
+  // The bar wraps to several rows on narrow screens, so the sticky offset
+  // can't be a constant — publish its live height for scroll-padding-top.
+  useEffect(() => {
+    const nav = navRef.current;
+    if (!nav) return;
+    const publish = () => {
+      document.documentElement.style.setProperty(
+        "--cb-sticky-offset",
+        `${Math.ceil(nav.getBoundingClientRect().height)}px`,
+      );
+    };
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(nav);
+    return () => {
+      observer.disconnect();
+      document.documentElement.style.removeProperty("--cb-sticky-offset");
+    };
+  }, []);
 
   const handleDeleteTag = async (slug: string) => {
     if (!isAdmin) return;
@@ -43,7 +64,7 @@ export function TagBar({ tags, active, onSelect, isAdmin = false, totalCount }: 
   };
 
   return (
-    <nav className="sticky top-0 z-40 -mx-4 mb-4 border-b border-border bg-bg/70 px-4 py-3 backdrop-blur">
+    <nav ref={navRef} data-testid="tag-bar" className="sticky top-0 z-40 -mx-4 mb-4 border-b border-border bg-bg/70 px-4 py-3 backdrop-blur">
       <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={() => {

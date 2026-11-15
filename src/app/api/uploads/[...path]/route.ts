@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readFile, stat } from 'fs/promises';
-import { join } from 'path';
+import path from 'node:path';
 import { existsSync } from 'fs';
 import { CONTENT_TYPES } from '@/lib/embeds';
+import { env } from '@/lib/env';
 
 export const runtime = 'nodejs';
 
@@ -10,35 +11,34 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
 ) {
-  const uploadDir = process.env.UPLOAD_DIR || './public/uploads';
-  const { path } = await params;
-  const filePath = join(process.cwd(), uploadDir, ...path);
-  
-  // Security check: ensure the path is within the upload directory
-  const resolvedPath = join(process.cwd(), uploadDir);
-  if (!filePath.startsWith(resolvedPath)) {
+  const root = path.resolve(env.UPLOAD_DIR);
+  const { path: segments } = await params;
+  const filePath = path.resolve(root, ...segments);
+
+  // Security check: ensure the resolved path stays inside the upload directory
+  if (!filePath.startsWith(root + path.sep)) {
     return new NextResponse('Forbidden', { status: 403 });
   }
-  
+
   // Check if file exists
   if (!existsSync(filePath)) {
     return new NextResponse('Not Found', { status: 404 });
   }
-  
+
   // Check if it's a file (not a directory)
   const stats = await stat(filePath);
   if (stats.isDirectory()) {
     return new NextResponse('Not Found', { status: 404 });
   }
-  
+
   // Read file
   try {
     const file = await readFile(filePath);
-    
+
     // Determine content type based on extension (shared registry).
     const ext = filePath.split('.').pop()?.toLowerCase();
     const contentType = CONTENT_TYPES[ext || ''] || 'application/octet-stream';
-    
+
     // Cache headers
     const response = new NextResponse(file, {
       headers: {
@@ -47,7 +47,7 @@ export async function GET(
         'X-Content-Type-Options': 'nosniff',
       },
     });
-    
+
     return response;
   } catch (error) {
     return new NextResponse('Internal Server Error', { status: 500 });

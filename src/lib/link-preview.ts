@@ -30,6 +30,9 @@ export function isPrivateAddress(ip: string): boolean {
     if (a === 169 && b === 254) return true; // link-local
     if (a === 172 && b >= 16 && b <= 31) return true;
     if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64.0.0/10
+    if (a === 198 && (b === 18 || b === 19)) return true; // benchmarking 198.18.0.0/15
+    if (a >= 224) return true; // multicast + reserved
     return false;
   }
   if (v === 6) {
@@ -77,6 +80,38 @@ export async function assertSafeUrl(raw: string): Promise<URL> {
     throw new AppError("Could not resolve host", 400, "DNS_ERROR");
   }
   return u;
+}
+
+export const MAX_REDIRECTS = 5;
+
+/**
+ * Fetch `start` (already validated by assertSafeUrl), following redirects
+ * manually so every hop is re-validated — a public URL must not be able to
+ * redirect the fetch onto an internal address.
+ */
+export async function fetchWithSafeRedirects(
+  start: URL,
+  init: Omit<RequestInit, "redirect"> = {},
+): Promise<{ res: Response; url: URL }> {
+  let url = start;
+  for (let redirects = 0; ; redirects++) {
+    const res = await fetch(url.href, { ...init, redirect: "manual" });
+    const location = res.headers.get("location");
+    const isRedirect =
+      res.status === 301 ||
+      res.status === 302 ||
+      res.status === 303 ||
+      res.status === 307 ||
+      res.status === 308;
+    if (!isRedirect || !location) {
+      return { res, url };
+    }
+    await res.body?.cancel().catch(() => {});
+    if (redirects >= MAX_REDIRECTS) {
+      throw new AppError("Too many redirects", 502, "TOO_MANY_REDIRECTS");
+    }
+    url = await assertSafeUrl(new URL(location, url).href);
+  }
 }
 
 /** Decode a handful of common HTML entities found in meta content. */

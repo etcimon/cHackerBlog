@@ -29,7 +29,7 @@ export class ApiClientError extends Error {
   }
 }
 
-/** Max attempts (1 initial + retries) for transient failures. */
+/** Max attempts (1 initial + retries) for transient failures on GET requests. */
 const MAX_ATTEMPTS = 3;
 /** Base backoff in ms; grows exponentially per attempt. */
 const RETRY_BASE_MS = 300;
@@ -37,7 +37,10 @@ const RETRY_BASE_MS = 300;
 /**
  * Only transient failures are worth retrying. 4xx responses (e.g. 404, 401,
  * 422) are deterministic — retrying them just produces a tight loop — so we
- * retry network errors and 5xx/429 server responses only.
+ * retry network errors and 5xx/429 server responses only. Retries are
+ * additionally restricted to GET requests (see `request`): replaying a
+ * failed mutation — article create, comment post, upload, Grok translate —
+ * could duplicate its side effects.
  */
 function isRetryable(err: unknown): boolean {
   if (err instanceof ApiClientError) {
@@ -88,14 +91,18 @@ async function requestOnce<T>(input: string, init?: RequestInit): Promise<T> {
 }
 
 async function request<T>(input: string, init?: RequestInit): Promise<T> {
+  // Only GETs are retried: mutations are not idempotent, so a failed POST
+  // (create article, comment, upload, translate) gets exactly one attempt.
+  const maxAttempts =
+    (init?.method ?? "GET").toUpperCase() === "GET" ? MAX_ATTEMPTS : 1;
   let lastErr: unknown;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       return await requestOnce<T>(input, init);
     } catch (err) {
       lastErr = err;
       // Stop immediately on deterministic (non-retryable) errors like 404.
-      if (!isRetryable(err) || attempt === MAX_ATTEMPTS) break;
+      if (!isRetryable(err) || attempt === maxAttempts) break;
       await sleep(RETRY_BASE_MS * 2 ** (attempt - 1));
     }
   }

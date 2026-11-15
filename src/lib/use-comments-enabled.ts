@@ -1,20 +1,12 @@
-import { useEffect, useState } from "react";
+"use client";
+
+import { useSiteConfig } from "@/lib/use-site-config";
 
 /**
- * Hook to get the COMMENTS_ENABLED setting from the server.
- * Since this is a client-side hook, we need to fetch it from an API endpoint
- * or pass it as a prop. For now, we'll default to true and add an API endpoint
- * later if needed.
+ * Whether reader comments are enabled site-wide. Reads the public site config
+ * (GET /api/settings, which exposes COMMENTS_ENABLED); defaults to true until
+ * the config loads.
  */
 export function useCommentsEnabled(): boolean {
-  // For now, default to true. In a real implementation, this would
-  // fetch from an API endpoint that reads env.COMMENTS_ENABLED
-  const [enabled, setEnabled] = useState(true);
-
-  useEffect(() => {
-    // Could fetch from /api/settings or similar in the future
-    setEnabled(true);
-  }, []);
-
-  return enabled;
+  return useSiteConfig()?.commentsEnabled ?? true;
 }

@@ -31,6 +31,7 @@ import {
   type CodeToggleOptions,
 } from "@/lib/highlight";
 import { hydrateLinkEmbeds } from "@/lib/link-embeds";
+import { scrollToAnchor } from "@/lib/scroll";
 
 // useLayoutEffect on the server logs a warning; fall back to useEffect there.
 const useIsoLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
@@ -184,10 +185,7 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
       setOpen(true);
       // Scroll to the article's top anchor after content loads
       setTimeout(() => {
-        const anchor = document.getElementById(`${item.slug}-top`);
-        if (anchor) {
-          anchor.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
+        scrollToAnchor(`${item.slug}-top`);
       }, 100);
     } catch (err) {
       toast.error(err instanceof ApiClientError ? err.message : t("article.failedLoad"));
@@ -244,7 +242,7 @@ export function ArticleCard({ item, expanded = false, onEdit }: Props) {
       <article
         id={item.slug}
         data-testid="article-card"
-        className="animate-fade-in scroll-mt-24 border-b border-border py-10"
+        className="animate-fade-in border-b border-border py-10"
       >
         <header id={`${item.slug}-header`} className="mb-3">
         <div className="mb-2 flex items-center justify-between">

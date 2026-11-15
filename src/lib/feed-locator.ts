@@ -17,7 +17,7 @@ import { getPrisma } from "@/lib/prisma";
 import { remember } from "@/lib/cache";
 import { env } from "@/lib/env";
 import { Errors } from "@/lib/errors";
-import { mapFeedRow, type FeedPage } from "@/lib/articles";
+import { LEGAL_SLUGS, mapFeedRow, type FeedPage } from "@/lib/articles";
 
 /** Same ordering tuple getFeed uses; kept here so ranking stays identical. */
 const FEED_ORDER = [
@@ -80,6 +80,11 @@ async function computeFirstLoad(
 ): Promise<FirstLoadResult> {
   const prisma = getPrisma();
 
+  // Reserved legal pages live outside the feed; locating one is a 404.
+  if ((LEGAL_SLUGS as readonly string[]).includes(slug)) {
+    throw Errors.notFound("Article not found");
+  }
+
   // 1. Resolve the slug -> row (with its tags) and enforce visibility.
   const target = await prisma.article.findUnique({
     where: { slug },
@@ -94,6 +99,7 @@ async function computeFirstLoad(
 
   const where = {
     ...(includeUnpublished ? {} : { published: true }),
+    slug: { notIn: [...LEGAL_SLUGS] },
     ...(tag ? { tags: { some: { slug: tag } } } : {}),
   };
 
@@ -116,7 +122,7 @@ async function computeFirstLoad(
     take: fetchSize,
     include: {
       tags: { select: { name: true, slug: true } },
-      _count: { select: { comments: true } },
+      _count: { select: { comments: { where: { approved: true } } } },
     },
   });
 

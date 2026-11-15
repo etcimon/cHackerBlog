@@ -6,7 +6,7 @@
  * ADMIN_PASSWORD is compared directly (dev convenience). Cookie integrity is
  * protected with an HMAC over a timestamp using SESSION_SECRET.
  */
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import bcrypt from "bcryptjs";
 import { env } from "@/lib/env";
@@ -54,7 +54,11 @@ export async function checkPassword(password: string): Promise<boolean> {
     return bcrypt.compare(password, env.ADMIN_PASSWORD_HASH);
   }
   if (env.ADMIN_PASSWORD) {
-    return password === env.ADMIN_PASSWORD;
+    // Compare sha256 digests so the check is constant-time regardless of
+    // input length (timingSafeEqual requires equal-length buffers).
+    const a = createHash("sha256").update(password).digest();
+    const b = createHash("sha256").update(env.ADMIN_PASSWORD).digest();
+    return timingSafeEqual(a, b);
   }
   return false;
 }

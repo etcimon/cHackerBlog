@@ -37,6 +37,7 @@ Bottom-up layering: each layer depends only on those below it.
 - `src/lib/embeds.ts` - Custom `@[...]( ...)` embed grammar; markdown<->HTML round-trip
 - `src/lib/ext-embeds.ts` - Provider embeds (YouTube, Vimeo, X, etc.)
 - `src/lib/link-embeds.ts` / `src/lib/link-preview.ts` - Generic link-preview cards
+- `src/lib/code-block-render.ts` - Shared code-block rendering for the WYSIWYG preview and the Grok translation pipeline
 
 ### Layer 3: Social Integrations
 - `src/lib/social/index.ts` - Social auto-posting coordinator
@@ -59,12 +60,13 @@ in-memory bus + DB polling when Redis is off.
 ### Layer 4: API Routes
 - `src/app/api/auth/` - Admin authentication
 - `src/app/api/feed/` - Cursor-paginated feed with tag/locale filtering
+- `src/app/api/feed/locate/` - Tag-scoped first-load feed slice containing a target article (slug routes)
 - `src/app/api/articles/` - Article CRUD operations
 - `src/app/api/articles/[id]/pin/` - Pin/unpin an article
 - `src/app/api/articles/[id]/translate/` - Article translation via Grok
 - `src/app/api/comments/` - Comment CRUD with moderation (`/admin` for moderation)
 - `src/app/api/settings/` - Site settings (GET public, PUT admin)
-- `src/app/api/legal/[slug]/` - Legal pages (privacy, terms) read/edit
+- `src/app/api/legal/` + `src/app/api/legal/[slug]/` - Legal pages status + read/edit (privacy, terms)
 - `src/app/api/upload/` + `src/app/api/uploads/` - Admin image upload and serving
 - `src/app/api/tags/` - Tag listing
 - `src/app/api/link-preview/` - Server-side link metadata fetch for embeds
@@ -98,6 +100,7 @@ in-memory bus + DB polling when Redis is off.
 - `src/lib/use-i18n.ts` - Client i18n hook for locale resolution and translations
 - `src/lib/use-site-config.ts` - Client config hook for site settings
 - `src/lib/use-comments-enabled.ts` - Client hook for the comments toggle
+- `src/lib/scroll.ts` - Sticky-offset-aware anchor scrolling (re-aligns while late layout shifts settle)
 
 ### Layer 6: Pages & Styling
 - `src/app/layout.tsx` - Root layout with theme injection (`<html data-theme>`)
@@ -142,6 +145,8 @@ bun run build         # Build for production
 bun run typecheck     # TypeScript type checking
 bun run lint          # ESLint
 bun run test          # Run tests
+bun run test:unit      # Unit tests only (tests/unit)
+bun test tests/e2e/<file>.test.ts   # Single e2e file (starts its own server on :3001, uses test.sqlite)
 ```
 
 ### Adding New Features

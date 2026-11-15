@@ -12,6 +12,7 @@ import { extractPreviewHtml } from "@/lib/embeds";
 import { deriveSeo } from "@/lib/seo";
 import { getSettings } from "@/lib/settings";
 import { invalidateArticleTranslations, evictArticleTranslationCache } from "@/lib/grok";
+import { Errors } from "@/lib/errors";
 
 /** Slugs reserved for legal pages — excluded from the main feed. */
 export const LEGAL_SLUGS = ["terms-conditions", "privacy-policy"] as const;
@@ -135,7 +136,7 @@ export async function getFeed(query: FeedQuery): Promise<FeedPage> {
       include: {
         tags: { select: { name: true, slug: true } },
         _count: {
-          select: { comments: true }
+          select: { comments: { where: { approved: true } } }
         }
       },
     });
@@ -175,7 +176,7 @@ export async function getFeed(query: FeedQuery): Promise<FeedPage> {
       include: {
         tags: { select: { name: true, slug: true } },
         _count: {
-          select: { comments: true }
+          select: { comments: { where: { approved: true } } }
         }
       },
     });
@@ -322,7 +323,7 @@ export async function updateArticle(id: string, input: ArticleInput) {
   });
 
   if (!currentArticle) {
-    throw new Error("Article not found");
+    throw Errors.notFound("Article not found");
   }
 
   // Disconnect all existing tags
@@ -420,15 +421,19 @@ export async function getTotalArticleCount(includeUnpublished = false) {
 
 export async function deleteTag(slug: string) {
   const prisma = getPrisma();
+  const tag = await prisma.tag.findUnique({ where: { slug } });
+  if (!tag) {
+    throw Errors.notFound("Tag not found");
+  }
   // Check if tag is used by any articles
   const articleCount = await prisma.article.count({
     where: { tags: { some: { slug } } },
   });
-  
+
   if (articleCount > 0) {
-    throw new Error(`Cannot delete tag: ${articleCount} article(s) use this tag`);
+    throw Errors.conflict(`Cannot delete tag: ${articleCount} article(s) use this tag`);
   }
-  
+
   await prisma.tag.delete({ where: { slug } });
 }
 
@@ -512,7 +517,7 @@ export async function createOrUpdateLegalArticle(
   slug: string,
   input: { title: string; content: string; published: boolean },
 ) {
-  if (!isLegalSlug(slug)) throw new Error("Invalid legal slug");
+  if (!isLegalSlug(slug)) throw Errors.notFound("Legal article not found");
   const prisma = getPrisma();
   const settings = await getSettings();
   const seo = deriveSeo({
@@ -577,10 +582,10 @@ export async function upsertLegalTranslation(
   locale: string,
   input: { title: string; content: string; published: boolean },
 ) {
-  if (!isLegalSlug(slug)) throw new Error("Invalid legal slug");
+  if (!isLegalSlug(slug)) throw Errors.notFound("Legal article not found");
   const prisma = getPrisma();
   const article = await prisma.article.findUnique({ where: { slug } });
-  if (!article) throw new Error("Legal article not found");
+  if (!article) throw Errors.notFound("Legal article not found");
 
   const isEmptyContent =
     !input.content ||

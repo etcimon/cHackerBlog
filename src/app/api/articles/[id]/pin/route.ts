@@ -26,7 +26,7 @@ export const POST = handler(async (req: Request, { params }: { params: Promise<{
     },
   });
   // Invalidate feed cache since pin order has changed
-  invalidate("feed");
+  await invalidate("feed");
   return ok({ pinned: updated.pinned, pinnedAt: updated.pinnedAt });
 });
 
@@ -46,6 +46,6 @@ export const DELETE = handler(async (req: Request, { params }: { params: Promise
     },
   });
   // Invalidate feed cache since pin order has changed
-  invalidate("feed");
+  await invalidate("feed");
   return ok({ pinned: updated.pinned, pinnedAt: updated.pinnedAt });
 });

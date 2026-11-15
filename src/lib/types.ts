@@ -55,6 +55,8 @@ export interface PublicSettings {
   grokConfigured: boolean;
   /** i18n kill-switch: force English + hide the language switcher (DISABLE_I18N). */
   i18nDisabled: boolean;
+  /** Whether reader comments are enabled site-wide (COMMENTS_ENABLED). */
+  commentsEnabled: boolean;
 }
 
 export interface TagItem {

@@ -85,4 +85,32 @@ describe("Admin endpoint security", () => {
     }
     expect(violations).toEqual([]);
   });
+
+  it("mutating routes require admin unless explicitly public", () => {
+    const MUTATING_EXPORT =
+      /export\s+(?:const|async\s+function)\s+(?:POST|PUT|PATCH|DELETE)\b/;
+    // Routes that are intentionally reachable without an admin session
+    // (login/logout, public comments, visitor chat relay, Grok translate
+    // which gates unpublished access internally).
+    const PUBLIC_ROUTES = new Set([
+      "api/auth/route.ts",
+      "api/comments/route.ts",
+      "api/articles/[id]/translate/route.ts",
+      "api/chat/send/route.ts",
+      "api/chat/close/route.ts",
+      "api/chat/telegram/route.ts",
+    ]);
+    const appDir = path.join(process.cwd(), "src", "app");
+    const violations: string[] = [];
+    for (const file of routes) {
+      const src = fs.readFileSync(file, "utf-8");
+      if (!MUTATING_EXPORT.test(src)) continue;
+      const rel = path.relative(appDir, file).replace(/\\/g, "/");
+      if (PUBLIC_ROUTES.has(rel)) continue;
+      if (!src.includes("await requireAdmin()")) {
+        violations.push(rel);
+      }
+    }
+    expect(violations).toEqual([]);
+  });
 });

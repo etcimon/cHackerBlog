@@ -3,6 +3,7 @@
  */
 import { handler, ok, AppError } from "@/lib/errors";
 import { listAllTags, deleteTag } from "@/lib/articles";
+import { requireAdmin } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -12,6 +13,7 @@ export const GET = handler(async () => {
 });
 
 export const DELETE = handler(async (req: Request) => {
+  await requireAdmin();
   const { searchParams } = new URL(req.url);
   const slug = searchParams.get("slug");
   

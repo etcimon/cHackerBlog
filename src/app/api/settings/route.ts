@@ -40,6 +40,8 @@ export const GET = handler(async () => {
     // i18n kill-switch: when true the site is forced to English and the
     // language switcher is hidden (see DISABLE_I18N).
     i18nDisabled: env.DISABLE_I18N,
+    // Whether reader comments are enabled site-wide (COMMENTS_ENABLED).
+    commentsEnabled: env.COMMENTS_ENABLED,
   });
 });
 

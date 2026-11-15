@@ -50,6 +50,9 @@ export const DEFAULT_GROK_TITLE_PROMPT = `Translate the following blog article t
 
 {content}`;
 
+/** Fallback SESSION_SECRET — public knowledge, never safe in production. */
+const DEFAULT_SESSION_SECRET = "dev-insecure-secret-change-me";
+
 /** Parse size strings like "200M", "1G", "500K" to bytes. */
 const sizeBytes = z
   .string()
@@ -81,7 +84,7 @@ const schema = z.object({
   // Admin auth
   ADMIN_PASSWORD: z.string().optional(),
   ADMIN_PASSWORD_HASH: z.string().optional(),
-  SESSION_SECRET: z.string().min(8).default("dev-insecure-secret-change-me"),
+  SESSION_SECRET: z.string().min(8).default(DEFAULT_SESSION_SECRET),
 
   // Logging
   LOG_LEVEL: z
@@ -210,6 +213,19 @@ export type Env = typeof env;
 
 export const isProd = env.NODE_ENV === "production";
 export const isDev = env.NODE_ENV === "development";
+
+// Warn (don't throw) when production runs on the public default secret —
+// admin session cookies signed with it can be forged. Skipped during the
+// production build itself, which evaluates env before secrets are needed.
+if (
+  isProd &&
+  env.SESSION_SECRET === DEFAULT_SESSION_SECRET &&
+  process.env.NEXT_PHASE !== "phase-production-build"
+) {
+  console.warn(
+    "[env] SESSION_SECRET is not set: admin session cookies are signed with the public default secret and can be forged. Set SESSION_SECRET to a long random value.",
+  );
+}
 
 /**
  * Whether the Grok translation integration is usable. Mirrors the optional-

@@ -15,6 +15,12 @@ body {
   font-family: var(--cb-font-body);
 }
 
+// Keep anchored scrolls (article -top markers, hash navigation) below the
+// sticky tag bar; TagBar publishes its live height as --cb-sticky-offset.
+html {
+  scroll-padding-top: var(--cb-sticky-offset, 0px);
+}
+
 // --- Rich article typography (shared by WYSIWYG output + markdown preview) ---
 .article-body {
   line-height: 1.75;
